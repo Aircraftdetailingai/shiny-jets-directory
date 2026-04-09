@@ -73,7 +73,7 @@ export default function DirectoryPage() {
         {/* Headline + Search */}
         <div className="relative z-10 text-center px-6 pt-4 pb-2">
           <h1 className="text-3xl sm:text-4xl md:text-5xl font-light text-white tracking-tight mb-3">
-            Find a Certified Aircraft Detailer
+            Find an Aircraft Detailer
           </h1>
           <p className="text-white/40 text-sm sm:text-base mb-6 max-w-lg mx-auto">
             Browse the Shiny Jets network of professional aircraft detailers worldwide
