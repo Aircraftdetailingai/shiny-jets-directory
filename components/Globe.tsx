@@ -106,7 +106,7 @@ export default function Globe({ detailers, onPinClick, focusAirport }: GlobeProp
       scene.add(new THREE.Mesh(wireGeom, wireMat));
 
       // Pins
-      const pins: { mesh: THREE.Mesh; detailer: Detailer }[] = [];
+      const pins: { mesh: any; detailer: Detailer }[] = [];
       const pinGeom = new THREE.SphereGeometry(0.012, 8, 8);
 
       detailers.forEach(d => {
