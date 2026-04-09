@@ -40,7 +40,6 @@ export default function DirectoryPage() {
     e.preventDefault();
     const q = search.trim().toUpperCase();
     if (q.length >= 3) {
-      // Try as airport code
       if (/^K?[A-Z]{3,4}$/.test(q)) {
         setFocusAirport(q.startsWith('K') ? q : `K${q}`);
       } else {
@@ -56,9 +55,9 @@ export default function DirectoryPage() {
   const slug = selected?.slug || selected?.company?.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || selected?.id;
 
   return (
-    <div className="min-h-screen bg-[#0a0e1a] flex flex-col overflow-hidden">
+    <div className="h-screen bg-[#0a0e1a] flex flex-col overflow-hidden">
       {/* Header */}
-      <header className="relative z-20 flex items-center justify-between px-6 py-4">
+      <header className="relative z-20 flex items-center justify-between px-6 py-3 flex-shrink-0">
         <a href="https://shinyjets.com" className="flex items-center gap-2.5">
           <div className="w-8 h-8 rounded-full bg-blue-500 flex items-center justify-center text-white text-xs font-bold">SJ</div>
           <span className="text-white font-semibold text-lg tracking-tight hidden sm:block">Shiny Jets</span>
@@ -68,23 +67,23 @@ export default function DirectoryPage() {
         </a>
       </header>
 
-      {/* Hero + Globe */}
-      <div className="relative flex-1 flex flex-col items-center">
-        {/* Headline + Search */}
-        <div className="relative z-10 text-center px-6 pt-4 pb-2">
+      {/* Main content area — globe fills most of viewport */}
+      <div className="relative flex-1 min-h-0">
+        {/* Headline + Search — overlaid on top of globe */}
+        <div className="absolute top-0 left-0 right-0 z-10 text-center px-6 pt-4 pb-2 pointer-events-none">
           <h1 className="text-3xl sm:text-4xl md:text-5xl font-light text-white tracking-tight mb-3">
             Find an Aircraft Detailer
           </h1>
           <p className="text-white/40 text-sm sm:text-base mb-6 max-w-lg mx-auto">
             Browse the Shiny Jets network of professional aircraft detailers worldwide
           </p>
-          <form onSubmit={handleSearch} className="max-w-md mx-auto flex gap-2">
+          <form onSubmit={handleSearch} className="max-w-md mx-auto flex gap-2 pointer-events-auto">
             <input
               type="text"
               value={search}
               onChange={e => setSearch(e.target.value)}
               placeholder="Search by airport code (KTEB, KLAS...)"
-              className="flex-1 px-4 py-3 rounded-lg bg-white/[0.06] border border-white/10 text-white text-sm placeholder-white/30 outline-none focus:border-blue-500/50 transition-colors"
+              className="flex-1 px-4 py-3 rounded-lg bg-white/[0.06] border border-white/10 text-white text-sm placeholder-white/30 outline-none focus:border-blue-500/50 transition-colors backdrop-blur-sm"
             />
             <button type="submit" className="px-5 py-3 rounded-lg bg-blue-500 text-white text-sm font-medium hover:bg-blue-600 transition-colors">
               Search
@@ -92,8 +91,8 @@ export default function DirectoryPage() {
           </form>
         </div>
 
-        {/* Globe */}
-        <div className="relative w-full flex-1 min-h-[400px] md:min-h-[500px]">
+        {/* Globe — fills entire remaining area, positioned to show bottom 70% */}
+        <div className="absolute inset-0" style={{ top: '15%' }}>
           {loading ? (
             <div className="absolute inset-0 flex items-center justify-center">
               <div className="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
@@ -182,7 +181,7 @@ export default function DirectoryPage() {
       )}
 
       {/* Footer */}
-      <footer className="relative z-10 text-center py-4 border-t border-white/5">
+      <footer className="relative z-10 text-center py-3 border-t border-white/5 flex-shrink-0">
         <p className="text-white/20 text-xs">
           <a href="https://shinyjets.com" className="hover:text-white/40 transition-colors">Shiny Jets</a>
           {' '}&middot; The Professional Aircraft Detailing Platform

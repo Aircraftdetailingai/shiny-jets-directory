@@ -1,6 +1,6 @@
 'use client';
 
-import { useRef, useEffect, useCallback } from 'react';
+import { useRef, useEffect } from 'react';
 import AIRPORTS from '@/lib/airports';
 
 interface Detailer {
@@ -59,72 +59,99 @@ export default function Globe({ detailers, onPinClick, focusAirport }: GlobeProp
       camera.position.z = 3.2;
 
       // Lights
-      const ambient = new THREE.AmbientLight(0x334466, 1.2);
+      const ambient = new THREE.AmbientLight(0xffffff, 1.5);
       scene.add(ambient);
-      const directional = new THREE.DirectionalLight(0x88aacc, 0.8);
+      const directional = new THREE.DirectionalLight(0x88aacc, 0.6);
       directional.position.set(5, 3, 5);
       scene.add(directional);
 
-      // Globe
-      const globeGeom = new THREE.SphereGeometry(1, 64, 64);
-      const globeMat = new THREE.MeshPhongMaterial({
-        color: 0x001f3f,
-        shininess: 25,
-        specular: 0x112244,
+      // Load earth texture
+      const textureLoader = new THREE.TextureLoader();
+      const earthTexture = await new Promise<any>((resolve) => {
+        textureLoader.load(
+          'https://unpkg.com/three-globe/example/img/earth-dark.jpg',
+          (tex: any) => resolve(tex),
+          undefined,
+          () => resolve(null)
+        );
       });
+
+      if (disposed) return;
+
+      // Globe sphere with texture
+      const globeGeom = new THREE.SphereGeometry(1, 64, 64);
+      let globeMat;
+      if (earthTexture) {
+        globeMat = new THREE.MeshPhongMaterial({
+          map: earthTexture,
+          shininess: 15,
+          specular: 0x111122,
+        });
+      } else {
+        // Fallback if texture fails to load
+        globeMat = new THREE.MeshPhongMaterial({
+          color: 0x001f3f,
+          shininess: 25,
+          specular: 0x112244,
+        });
+      }
       const globe = new THREE.Mesh(globeGeom, globeMat);
       scene.add(globe);
 
       // Atmosphere glow
-      const glowGeom = new THREE.SphereGeometry(1.02, 64, 64);
+      const glowGeom = new THREE.SphereGeometry(1.025, 64, 64);
       const glowMat = new THREE.MeshBasicMaterial({
         color: 0x0066aa,
         transparent: true,
-        opacity: 0.08,
+        opacity: 0.1,
         side: THREE.BackSide,
       });
       scene.add(new THREE.Mesh(glowGeom, glowMat));
 
-      // Outer glow (rim)
-      const rimGeom = new THREE.SphereGeometry(1.06, 64, 64);
+      // Outer rim glow
+      const rimGeom = new THREE.SphereGeometry(1.08, 64, 64);
       const rimMat = new THREE.MeshBasicMaterial({
         color: 0x0088cc,
         transparent: true,
-        opacity: 0.04,
+        opacity: 0.05,
         side: THREE.BackSide,
       });
       scene.add(new THREE.Mesh(rimGeom, rimMat));
 
-      // Continent wireframe overlay
-      const wireGeom = new THREE.IcosahedronGeometry(1.002, 3);
-      const wireMat = new THREE.MeshBasicMaterial({
-        color: 0x0d1520,
-        wireframe: true,
-        transparent: true,
-        opacity: 0.15,
-      });
-      scene.add(new THREE.Mesh(wireGeom, wireMat));
-
       // Pins
       const pins: { mesh: any; detailer: Detailer }[] = [];
-      const pinGeom = new THREE.SphereGeometry(0.012, 8, 8);
+      const pinGeom = new THREE.SphereGeometry(0.015, 8, 8);
 
       detailers.forEach(d => {
         const coords = AIRPORTS[d.home_airport?.toUpperCase()];
         if (!coords) return;
         const [lat, lng] = coords;
-        const pos = latLngToVector3(lat, lng, 1.01);
+        const pos = latLngToVector3(lat, lng, 1.015);
 
-        const pinMat = new THREE.MeshBasicMaterial({ color: 0x0081b8 });
+        const pinMat = new THREE.MeshBasicMaterial({ color: 0x00aaff });
         const pin = new THREE.Mesh(pinGeom, pinMat);
         pin.position.copy(pos);
         globe.add(pin);
 
-        const dotGeom = new THREE.SphereGeometry(0.005, 6, 6);
+        // Bright center dot
+        const dotGeom = new THREE.SphereGeometry(0.006, 6, 6);
         const dotMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
         const dot = new THREE.Mesh(dotGeom, dotMat);
         dot.position.copy(pos);
         globe.add(dot);
+
+        // Pulse ring
+        const ringGeom = new THREE.RingGeometry(0.018, 0.025, 16);
+        const ringMat = new THREE.MeshBasicMaterial({
+          color: 0x00aaff,
+          transparent: true,
+          opacity: 0.3,
+          side: THREE.DoubleSide,
+        });
+        const ring = new THREE.Mesh(ringGeom, ringMat);
+        ring.position.copy(pos);
+        ring.lookAt(new THREE.Vector3(0, 0, 0));
+        globe.add(ring);
 
         pins.push({ mesh: pin, detailer: d });
       });
@@ -133,6 +160,7 @@ export default function Globe({ detailers, onPinClick, focusAirport }: GlobeProp
         renderer, scene, camera, globe, pins,
         isDragging: false,
         prevMouse: { x: 0, y: 0 },
+        startMouse: { x: 0, y: 0 },
         autoRotate: true,
         targetRotation: null,
       };
@@ -146,6 +174,7 @@ export default function Globe({ detailers, onPinClick, focusAirport }: GlobeProp
         sceneRef.current.isDragging = true;
         sceneRef.current.autoRotate = false;
         sceneRef.current.prevMouse = { x: e.clientX, y: e.clientY };
+        sceneRef.current.startMouse = { x: e.clientX, y: e.clientY };
       };
 
       const handlePointerMove = (e: PointerEvent) => {
@@ -160,7 +189,7 @@ export default function Globe({ detailers, onPinClick, focusAirport }: GlobeProp
 
       const handlePointerUp = (e: PointerEvent) => {
         if (!sceneRef.current) return;
-        const moved = Math.abs(e.clientX - sceneRef.current.prevMouse.x) + Math.abs(e.clientY - sceneRef.current.prevMouse.y);
+        const moved = Math.abs(e.clientX - sceneRef.current.startMouse.x) + Math.abs(e.clientY - sceneRef.current.startMouse.y);
         sceneRef.current.isDragging = false;
 
         if (moved < 5) {
@@ -193,7 +222,7 @@ export default function Globe({ detailers, onPinClick, focusAirport }: GlobeProp
         const s = sceneRef.current;
 
         if (s.autoRotate) {
-          s.globe.rotation.y += 0.001;
+          s.globe.rotation.y += 0.0008;
         }
 
         if (s.targetRotation) {
@@ -219,7 +248,6 @@ export default function Globe({ detailers, onPinClick, focusAirport }: GlobeProp
       };
       window.addEventListener('resize', handleResize);
 
-      // Store cleanup refs
       (el as any).__globeCleanup = () => {
         cancelAnimationFrame(frameId);
         window.removeEventListener('resize', handleResize);
