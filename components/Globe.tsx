@@ -1,6 +1,6 @@
 'use client';
 
-import { useRef, useEffect } from 'react';
+import { useRef, useEffect, useCallback } from 'react';
 import AIRPORTS from '@/lib/airports';
 
 interface Detailer {
@@ -84,6 +84,9 @@ export default function Globe({ detailers, onPinClick, focusAirport }: GlobeProp
       if (earthTexture) {
         globeMat = new THREE.MeshPhongMaterial({
           map: earthTexture,
+          color: 0x0d1520,
+          emissive: 0x001830,
+          emissiveIntensity: 0.3,
           shininess: 15,
           specular: 0x111122,
         });
@@ -287,10 +290,35 @@ export default function Globe({ detailers, onPinClick, focusAirport }: GlobeProp
     }, 5000);
   }, [focusAirport]);
 
+  const handleZoom = useCallback((dir: 'in' | 'out') => {
+    if (!sceneRef.current) return;
+    const cam = sceneRef.current.camera;
+    const delta = dir === 'in' ? -0.3 : 0.3;
+    cam.position.z = Math.max(2.0, Math.min(5.0, cam.position.z + delta));
+  }, []);
+
   return (
-    <div
-      ref={mountRef}
-      style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%' }}
-    />
+    <div style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%' }}>
+      <div
+        ref={mountRef}
+        style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%' }}
+      />
+      <div style={{ position: 'absolute', bottom: 16, right: 16, display: 'flex', flexDirection: 'column', gap: 4, zIndex: 10 }}>
+        <button
+          onClick={() => handleZoom('in')}
+          className="w-9 h-9 rounded-full bg-white/10 text-white border border-white/20 flex items-center justify-center text-lg font-bold hover:bg-white/20 transition-colors select-none"
+          aria-label="Zoom in"
+        >
+          +
+        </button>
+        <button
+          onClick={() => handleZoom('out')}
+          className="w-9 h-9 rounded-full bg-white/10 text-white border border-white/20 flex items-center justify-center text-lg font-bold hover:bg-white/20 transition-colors select-none"
+          aria-label="Zoom out"
+        >
+          &minus;
+        </button>
+      </div>
+    </div>
   );
 }

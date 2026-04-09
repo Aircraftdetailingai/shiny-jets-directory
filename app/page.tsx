@@ -59,40 +59,39 @@ export default function DirectoryPage() {
       {/* Header */}
       <header className="relative z-20 flex items-center justify-between px-6 py-3 flex-shrink-0">
         <a href="https://shinyjets.com" className="flex items-center gap-2.5">
-          <div className="w-8 h-8 rounded-full bg-blue-500 flex items-center justify-center text-white text-xs font-bold">SJ</div>
-          <span className="text-white font-semibold text-lg tracking-tight hidden sm:block">Shiny Jets</span>
+          <img src="https://shinyjets.com/logo.png" alt="Shiny Jets" className="h-9 object-contain" onError={(e) => { e.currentTarget.style.display = 'none'; }}  />
+          <span className="text-white font-semibold text-lg tracking-tight">Shiny Jets</span>
         </a>
         <a href={`${CRM_URL}/signup`} className="px-4 py-2 text-xs font-medium text-white/70 border border-white/10 rounded-lg hover:bg-white/5 transition-colors">
           List Your Business
         </a>
       </header>
 
-      {/* Main content area — globe fills most of viewport */}
-      <div className="relative flex-1 min-h-0">
-        {/* Headline + Search — overlaid on top of globe */}
-        <div className="absolute top-0 left-0 right-0 z-10 text-center px-6 pt-4 pb-2 pointer-events-none">
-          <h1 className="text-3xl sm:text-4xl md:text-5xl font-light text-white tracking-tight mb-3">
-            Find an Aircraft Detailer
-          </h1>
-          <p className="text-white/40 text-sm sm:text-base mb-6 max-w-lg mx-auto">
-            Browse the Shiny Jets network of professional aircraft detailers worldwide
-          </p>
-          <form onSubmit={handleSearch} className="max-w-md mx-auto flex gap-2 pointer-events-auto">
-            <input
-              type="text"
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-              placeholder="Search by airport code (KTEB, KLAS...)"
-              className="flex-1 px-4 py-3 rounded-lg bg-white/[0.06] border border-white/10 text-white text-sm placeholder-white/30 outline-none focus:border-blue-500/50 transition-colors backdrop-blur-sm"
-            />
-            <button type="submit" className="px-5 py-3 rounded-lg bg-blue-500 text-white text-sm font-medium hover:bg-blue-600 transition-colors">
-              Search
-            </button>
-          </form>
-        </div>
+      {/* Headline + Search — solid background, not overlaid */}
+      <div className="relative z-50 bg-[#0a0e1a] text-center px-6 pt-4 pb-6 flex-shrink-0">
+        <h1 className="text-3xl sm:text-4xl md:text-5xl font-light text-white tracking-tight mb-3">
+          Find an Aircraft Detailer
+        </h1>
+        <p className="text-white/40 text-sm sm:text-base mb-6 max-w-lg mx-auto">
+          Browse the Shiny Jets network of professional aircraft detailers worldwide
+        </p>
+        <form onSubmit={handleSearch} className="max-w-md mx-auto flex gap-2">
+          <input
+            type="text"
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            placeholder="Search by airport code (KTEB, KLAS...)"
+            className="flex-1 px-4 py-3 rounded-lg bg-white/[0.06] border border-white/10 text-white text-sm placeholder-white/30 outline-none focus:border-blue-500/50 transition-colors"
+          />
+          <button type="submit" className="px-5 py-3 rounded-lg bg-blue-500 text-white text-sm font-medium hover:bg-blue-600 transition-colors">
+            Search
+          </button>
+        </form>
+      </div>
 
-        {/* Globe — fills entire remaining area, positioned to show bottom 70% */}
-        <div className="absolute inset-0" style={{ top: '15%' }}>
+      {/* Globe — fills remaining space */}
+      <div className="relative flex-1 min-h-0">
+        <div className="absolute inset-0">
           {loading ? (
             <div className="absolute inset-0 flex items-center justify-center">
               <div className="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
