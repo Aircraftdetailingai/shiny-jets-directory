@@ -31,7 +31,10 @@ export default function DirectoryPage() {
   useEffect(() => {
     fetch(`${CRM_URL}/api/detailers/directory`)
       .then(r => r.ok ? r.json() : { detailers: [] })
-      .then(d => setDetailers(d.detailers || d || []))
+      .then(d => {
+        console.log('[directory] detailers fetched:', d?.detailers?.length, d?.detailers?.map((x: any) => ({ company: x.company, airport: x.home_airport })));
+        setDetailers(d.detailers || d || []);
+      })
       .catch(() => {})
       .finally(() => setLoading(false));
   }, []);

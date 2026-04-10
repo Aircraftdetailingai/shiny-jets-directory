@@ -296,9 +296,14 @@ export default function Globe({ detailers, onPinClick, focusAirport }: GlobeProp
       function buildPins() {
         clearPins();
         const clusters = buildClusters(detailersRef.current, camera.position.z);
+        console.log('[Globe] building pins for:', detailersRef.current.map(d => ({ company: d.company, airport: d.home_airport })));
+        console.log('[Globe] KCNO in airports:', AIRPORTS['KCNO']);
+        console.log('[Globe] cluster count:', clusters.length, 'cameraZ:', camera.position.z);
+
         for (const cluster of clusters) {
           const { lat, lng, detailers: items } = cluster;
-          const pos = latLngToVector3(lat, lng, globeRadius * 1.01);
+          // Position pins clearly above the globe surface so they're not hidden by the sphere
+          const pos = latLngToVector3(lat, lng, globeRadius * 1.025);
 
           const group = new THREE.Group();
           group.position.copy(pos);
@@ -307,13 +312,13 @@ export default function Globe({ detailers, onPinClick, focusAirport }: GlobeProp
           let pinColor: number;
 
           if (items.length === 1) {
-            pinRadius = 0.018;
-            pinColor = 0x00aaff;
-          } else if (items.length <= 3) {
             pinRadius = 0.028;
+            pinColor = 0x0081b8; // bright blue per spec
+          } else if (items.length <= 3) {
+            pinRadius = 0.038;
             pinColor = 0xeab308; // gold
           } else {
-            pinRadius = 0.038 + Math.min(0.02, items.length * 0.001);
+            pinRadius = 0.048 + Math.min(0.02, items.length * 0.001);
             pinColor = 0xeab308;
           }
 
