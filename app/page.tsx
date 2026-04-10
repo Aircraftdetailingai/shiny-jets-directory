@@ -56,41 +56,49 @@ export default function DirectoryPage() {
 
   return (
     <div className="h-screen bg-[#0a0e1a] overflow-hidden">
-      {/* Header — fixed top */}
-      <header className="fixed top-0 left-0 right-0 z-50 flex items-center justify-between px-6 py-3 bg-[#0a0e1a]/95 backdrop-blur border-b border-white/5">
-        <a href="https://shinyjets.com" className="flex items-center gap-2.5">
-          <img src="https://shinyjets.com/logo.png" alt="Shiny Jets" className="h-9 object-contain" onError={(e) => { e.currentTarget.style.display = 'none'; }}  />
-          <span className="text-white font-semibold text-lg tracking-tight">Shiny Jets</span>
-        </a>
-        <a href={`${CRM_URL}/signup`} className="px-4 py-2 text-xs font-medium text-white/70 border border-white/10 rounded-lg hover:bg-white/5 transition-colors">
-          List Your Business
-        </a>
-      </header>
+      {/* Solid dark header band — contains logo, headline, search */}
+      <div className="absolute top-0 left-0 right-0 z-40 bg-[#0a0e1a] border-b border-white/5" style={{ height: '220px' }}>
+        {/* Logo + List Your Business */}
+        <div className="flex items-center justify-between px-6 py-3">
+          <a href="https://shinyjets.com" className="flex items-center gap-2.5">
+            <img
+              src={`${CRM_URL}/api/public/logo`}
+              alt="Shiny Jets"
+              className="h-8 object-contain"
+              onError={(e) => { e.currentTarget.style.display = 'none'; }}
+            />
+            <span className="text-white font-semibold text-lg tracking-tight">Shiny Jets</span>
+          </a>
+          <a href={`${CRM_URL}/signup`} className="px-4 py-2 text-xs font-medium text-white/70 border border-white/10 rounded-lg hover:bg-white/5 transition-colors">
+            List Your Business
+          </a>
+        </div>
 
-      {/* Headline + Search — top 25% of viewport, below header */}
-      <div className="absolute top-[60px] left-0 right-0 z-40 flex flex-col items-center justify-center text-center px-6" style={{ height: 'calc(25vh - 60px)', minHeight: '120px' }}>
-        <h1 className="text-2xl sm:text-3xl md:text-4xl font-light text-white tracking-tight mb-2">
-          Find an Aircraft Detailer
-        </h1>
-        <p className="text-white/50 text-xs sm:text-sm mb-4 max-w-lg mx-auto">
-          Browse the Shiny Jets network of professional aircraft detailers worldwide
-        </p>
-        <form onSubmit={handleSearch} className="max-w-md w-full flex gap-2">
-          <input
-            type="text"
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-            placeholder="Search by airport code (KTEB, KLAS...)"
-            className="flex-1 px-4 py-3 rounded-lg bg-white/[0.06] border border-white/10 text-white text-sm placeholder-white/30 outline-none focus:border-blue-500/50 transition-colors"
-          />
-          <button type="submit" className="px-5 py-3 rounded-lg bg-blue-500 text-white text-sm font-medium hover:bg-blue-600 transition-colors">
-            Search
-          </button>
-        </form>
+        {/* Headline + search */}
+        <div className="text-center px-6 pt-3">
+          <h1 className="text-2xl sm:text-3xl md:text-4xl font-light text-white tracking-tight mb-2">
+            Find an Aircraft Detailer
+          </h1>
+          <p className="text-white/50 text-xs sm:text-sm mb-3 max-w-lg mx-auto">
+            Browse the Shiny Jets network of professional aircraft detailers worldwide
+          </p>
+          <form onSubmit={handleSearch} className="max-w-md mx-auto flex gap-2">
+            <input
+              type="text"
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              placeholder="Search by airport code (KTEB, KLAS...)"
+              className="flex-1 px-4 py-2.5 rounded-lg bg-white/[0.06] border border-white/10 text-white text-sm placeholder-white/30 outline-none focus:border-blue-500/50 transition-colors"
+            />
+            <button type="submit" className="px-5 py-2.5 rounded-lg bg-blue-500 text-white text-sm font-medium hover:bg-blue-600 transition-colors">
+              Search
+            </button>
+          </form>
+        </div>
       </div>
 
-      {/* Globe — bottom 75% of viewport, no overlap with text */}
-      <div className="absolute left-0 right-0 bottom-0" style={{ top: '25vh', minHeight: '60vh' }}>
+      {/* Globe — completely below the 220px header band */}
+      <div className="absolute left-0 right-0 bottom-0" style={{ top: '220px' }}>
         {loading ? (
           <div className="absolute inset-0 flex items-center justify-center">
             <div className="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />

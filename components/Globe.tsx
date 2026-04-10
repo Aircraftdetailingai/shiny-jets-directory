@@ -72,8 +72,8 @@ function drawGlobeTexture(features: any[]): HTMLCanvasElement {
   ctx.fillRect(0, 0, w, h);
 
   // Draw all countries from real GeoJSON
-  ctx.fillStyle = '#0d0f14';
-  ctx.strokeStyle = '#1a2535';
+  ctx.fillStyle = '#253545';
+  ctx.strokeStyle = 'rgba(100, 180, 255, 0.15)';
   ctx.lineWidth = 1.5;
 
   for (const f of features) {
@@ -147,12 +147,15 @@ export default function Globe({ detailers, onPinClick, focusAirport }: GlobeProp
       const camera = new THREE.PerspectiveCamera(45, w / h, 0.1, 1000);
       camera.position.z = 4;
 
-      // Lights — per spec: ambient blue, directional white, point light for atmosphere
-      const ambient = new THREE.AmbientLight(0x4488ff, 0.6);
+      // Lights — bright enough to clearly show continents
+      const ambient = new THREE.AmbientLight(0xffffff, 2.0);
       scene.add(ambient);
-      const directional = new THREE.DirectionalLight(0xffffff, 1.0);
-      directional.position.set(5, 3, 5);
-      scene.add(directional);
+      const keyLight = new THREE.DirectionalLight(0xffffff, 2.5);
+      keyLight.position.set(5, 3, 5);
+      scene.add(keyLight);
+      const fillLight = new THREE.DirectionalLight(0x6699ff, 1.0);
+      fillLight.position.set(-5, -3, 5);
+      scene.add(fillLight);
       const pointLight = new THREE.PointLight(0x4488ff, 0.3);
       pointLight.position.set(0, 0, 10);
       scene.add(pointLight);
