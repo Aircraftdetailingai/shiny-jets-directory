@@ -145,7 +145,9 @@ export default function Globe({ detailers, onPinClick, focusAirport }: GlobeProp
 
       const scene = new THREE.Scene();
       const camera = new THREE.PerspectiveCamera(45, w / h, 0.1, 1000);
-      camera.position.z = 4;
+      const isMobile = () => typeof window !== 'undefined' && window.innerWidth < 768;
+      const cameraZForViewport = () => (isMobile() ? 4.5 : 3.5);
+      camera.position.z = cameraZForViewport();
 
       // Lights — bright enough to clearly show continents
       const ambient = new THREE.AmbientLight(0xffffff, 2.0);
@@ -168,8 +170,8 @@ export default function Globe({ detailers, onPinClick, focusAirport }: GlobeProp
       canvasTexture.colorSpace = THREE.SRGBColorSpace;
       canvasTexture.needsUpdate = true;
 
-      // Globe sphere — larger radius for prominence
-      const globeRadius = 2.0;
+      // Globe sphere — radius 1.0, camera distance controls visible size
+      const globeRadius = 1.0;
       const globeGeom = new THREE.SphereGeometry(globeRadius, 64, 64);
       const globeMat = new THREE.MeshPhongMaterial({
         map: canvasTexture,
@@ -200,7 +202,7 @@ export default function Globe({ detailers, onPinClick, focusAirport }: GlobeProp
 
       // Pins
       const pins: { mesh: any; detailer: Detailer }[] = [];
-      const pinGeom = new THREE.SphereGeometry(0.025, 8, 8);
+      const pinGeom = new THREE.SphereGeometry(0.015, 8, 8);
 
       detailers.forEach(d => {
         const coords = AIRPORTS[d.home_airport?.toUpperCase()];
@@ -213,7 +215,7 @@ export default function Globe({ detailers, onPinClick, focusAirport }: GlobeProp
         pin.position.copy(pos);
         globe.add(pin);
 
-        const dotGeom = new THREE.SphereGeometry(0.01, 6, 6);
+        const dotGeom = new THREE.SphereGeometry(0.006, 6, 6);
         const dotMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
         const dot = new THREE.Mesh(dotGeom, dotMat);
         dot.position.copy(pos);
@@ -306,14 +308,17 @@ export default function Globe({ detailers, onPinClick, focusAirport }: GlobeProp
         const nw = mountRef.current.clientWidth || 800;
         const nh = mountRef.current.clientHeight || 600;
         camera.aspect = nw / nh;
+        camera.position.z = cameraZForViewport();
         camera.updateProjectionMatrix();
         renderer.setSize(nw, nh);
       };
       window.addEventListener('resize', handleResize);
+      window.addEventListener('orientationchange', handleResize);
 
       (el as any).__globeCleanup = () => {
         cancelAnimationFrame(frameId);
         window.removeEventListener('resize', handleResize);
+        window.removeEventListener('orientationchange', handleResize);
         renderer.domElement.removeEventListener('pointerdown', handlePointerDown);
         renderer.domElement.removeEventListener('pointermove', handlePointerMove);
         renderer.domElement.removeEventListener('pointerup', handlePointerUp);
@@ -354,7 +359,7 @@ export default function Globe({ detailers, onPinClick, focusAirport }: GlobeProp
     if (!sceneRef.current) return;
     const cam = sceneRef.current.camera;
     const delta = dir === 'in' ? -0.3 : 0.3;
-    cam.position.z = Math.max(2.5, Math.min(6.0, cam.position.z + delta));
+    cam.position.z = Math.max(2.0, Math.min(7.0, cam.position.z + delta));
   }, []);
 
   return (
