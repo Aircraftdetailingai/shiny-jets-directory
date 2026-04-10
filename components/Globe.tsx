@@ -1,6 +1,6 @@
 'use client';
 
-import { useRef, useEffect, useCallback } from 'react';
+import { useRef, useEffect, useCallback, useState } from 'react';
 import AIRPORTS from '@/lib/airports';
 import { feature } from 'topojson-client';
 
@@ -13,6 +13,76 @@ interface Detailer {
   has_online_booking: boolean;
   logo_url?: string;
   slug?: string;
+}
+
+interface Cluster {
+  lat: number;
+  lng: number;
+  detailers: Detailer[];
+}
+
+// Haversine distance in miles between two lat/lng points
+function distanceMiles(lat1: number, lng1: number, lat2: number, lng2: number): number {
+  const R = 3958.8; // Earth radius in miles
+  const toRad = (deg: number) => (deg * Math.PI) / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLng = toRad(lng2 - lng1);
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(a));
+}
+
+const PLAN_TIER: Record<string, number> = { enterprise: 3, business: 2, pro: 1, free: 0 };
+
+function topDetailer(detailers: Detailer[]): Detailer {
+  return [...detailers].sort((a, b) => (PLAN_TIER[b.plan] || 0) - (PLAN_TIER[a.plan] || 0))[0];
+}
+
+// Threshold based on camera distance: closer = smaller threshold = more individual pins
+function clusterThresholdMiles(cameraZ: number): number {
+  if (cameraZ > 4.0) return 500;
+  if (cameraZ > 2.5) return 100;
+  return 0; // Below 2.5: only same-airport pins are merged (threshold 0)
+}
+
+function buildClusters(detailers: Detailer[], cameraZ: number): Cluster[] {
+  const threshold = clusterThresholdMiles(cameraZ);
+  // Resolve airport coords for each detailer
+  const points: { lat: number; lng: number; detailer: Detailer }[] = [];
+  for (const d of detailers) {
+    const coords = AIRPORTS[(d.home_airport || '').toUpperCase()];
+    if (!coords) continue;
+    points.push({ lat: coords[0], lng: coords[1], detailer: d });
+  }
+
+  const clusters: Cluster[] = [];
+  const used = new Set<number>();
+
+  for (let i = 0; i < points.length; i++) {
+    if (used.has(i)) continue;
+    const seed = points[i];
+    const group: Detailer[] = [seed.detailer];
+    used.add(i);
+
+    // Find all other points within threshold
+    let centerLat = seed.lat;
+    let centerLng = seed.lng;
+    for (let j = i + 1; j < points.length; j++) {
+      if (used.has(j)) continue;
+      const p = points[j];
+      const dist = distanceMiles(centerLat, centerLng, p.lat, p.lng);
+      if (dist <= threshold) {
+        group.push(p.detailer);
+        used.add(j);
+        // Update centroid for subsequent comparisons
+        centerLat = (centerLat * (group.length - 1) + p.lat) / group.length;
+        centerLng = (centerLng * (group.length - 1) + p.lng) / group.length;
+      }
+    }
+
+    clusters.push({ lat: centerLat, lng: centerLng, detailers: group });
+  }
+
+  return clusters;
 }
 
 interface GlobeProps {
@@ -114,6 +184,9 @@ export default function Globe({ detailers, onPinClick, focusAirport }: GlobeProp
   const sceneRef = useRef<any>(null);
   const onPinClickRef = useRef(onPinClick);
   onPinClickRef.current = onPinClick;
+  const detailersRef = useRef(detailers);
+  detailersRef.current = detailers;
+  const [tooltip, setTooltip] = useState<{ x: number; y: number; lines: string[] } | null>(null);
 
   useEffect(() => {
     if (!mountRef.current) return;
@@ -200,37 +273,95 @@ export default function Globe({ detailers, onPinClick, focusAirport }: GlobeProp
       });
       scene.add(new THREE.Mesh(rimGeom, rimMat));
 
-      // Pins
-      const pins: { mesh: any; detailer: Detailer }[] = [];
-      const pinGeom = new THREE.SphereGeometry(0.015, 8, 8);
+      // Pins — built as clusters that re-render when zoom changes
+      type PinEntry = { mesh: any; group: any; cluster: Cluster };
+      const pinsContainer = new THREE.Group();
+      globe.add(pinsContainer);
+      const pins: PinEntry[] = [];
 
-      detailers.forEach(d => {
-        const coords = AIRPORTS[d.home_airport?.toUpperCase()];
-        if (!coords) return;
-        const [lat, lng] = coords;
-        const pos = latLngToVector3(lat, lng, globeRadius * 1.01);
+      function clearPins() {
+        for (const p of pins) {
+          pinsContainer.remove(p.group);
+          p.group.traverse((obj: any) => {
+            if (obj.geometry) obj.geometry.dispose();
+            if (obj.material) {
+              if (Array.isArray(obj.material)) obj.material.forEach((m: any) => m.dispose());
+              else obj.material.dispose();
+            }
+          });
+        }
+        pins.length = 0;
+      }
 
-        const pinMat = new THREE.MeshBasicMaterial({ color: 0x00aaff });
-        const pin = new THREE.Mesh(pinGeom, pinMat);
-        pin.position.copy(pos);
-        globe.add(pin);
+      function buildPins() {
+        clearPins();
+        const clusters = buildClusters(detailersRef.current, camera.position.z);
+        for (const cluster of clusters) {
+          const { lat, lng, detailers: items } = cluster;
+          const pos = latLngToVector3(lat, lng, globeRadius * 1.01);
 
-        const dotGeom = new THREE.SphereGeometry(0.006, 6, 6);
-        const dotMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
-        const dot = new THREE.Mesh(dotGeom, dotMat);
-        dot.position.copy(pos);
-        globe.add(dot);
+          const group = new THREE.Group();
+          group.position.copy(pos);
 
-        pins.push({ mesh: pin, detailer: d });
-      });
+          let pinRadius: number;
+          let pinColor: number;
+
+          if (items.length === 1) {
+            pinRadius = 0.018;
+            pinColor = 0x00aaff;
+          } else if (items.length <= 3) {
+            pinRadius = 0.028;
+            pinColor = 0xeab308; // gold
+          } else {
+            pinRadius = 0.038 + Math.min(0.02, items.length * 0.001);
+            pinColor = 0xeab308;
+          }
+
+          // Sphere mesh — this is what the raycaster hits
+          const sphereGeom = new THREE.SphereGeometry(pinRadius, 16, 16);
+          const sphereMat = new THREE.MeshBasicMaterial({ color: pinColor });
+          const sphere = new THREE.Mesh(sphereGeom, sphereMat);
+          group.add(sphere);
+
+          // White center dot for visibility
+          const dotGeom = new THREE.SphereGeometry(pinRadius * 0.4, 8, 8);
+          const dotMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+          const dot = new THREE.Mesh(dotGeom, dotMat);
+          group.add(dot);
+
+          // Halo ring for clusters with 2+ items
+          if (items.length > 1) {
+            const ringGeom = new THREE.RingGeometry(pinRadius * 1.3, pinRadius * 1.6, 24);
+            const ringMat = new THREE.MeshBasicMaterial({
+              color: pinColor,
+              transparent: true,
+              opacity: 0.4,
+              side: THREE.DoubleSide,
+            });
+            const ring = new THREE.Mesh(ringGeom, ringMat);
+            ring.lookAt(new THREE.Vector3(0, 0, 0));
+            group.add(ring);
+          }
+
+          // Orient the pin outward from the globe center
+          group.lookAt(new THREE.Vector3(0, 0, 0));
+
+          pinsContainer.add(group);
+          pins.push({ mesh: sphere, group, cluster });
+        }
+      }
+
+      buildPins();
 
       sceneRef.current = {
-        renderer, scene, camera, globe, pins,
+        renderer, scene, camera, globe, pins, pinsContainer, buildPins,
         isDragging: false,
         prevMouse: { x: 0, y: 0 },
         startMouse: { x: 0, y: 0 },
         autoRotate: true,
         targetRotation: null,
+        lastClusterZ: camera.position.z,
+        zoomTarget: null as null | number,
       };
 
       const raycaster = new THREE.Raycaster();
@@ -266,14 +397,20 @@ export default function Globe({ detailers, onPinClick, focusAirport }: GlobeProp
       };
 
       const handleMouseMove = (e: MouseEvent) => {
-        if (!pointerActive || !sceneRef.current) return;
-        const dx = e.clientX - pointerLastX;
-        const dy = e.clientY - pointerLastY;
-        sceneRef.current.globe.rotation.y += dx * 0.005;
-        sceneRef.current.globe.rotation.x += dy * 0.005;
-        sceneRef.current.globe.rotation.x = Math.max(-1.2, Math.min(1.2, sceneRef.current.globe.rotation.x));
-        pointerLastX = e.clientX;
-        pointerLastY = e.clientY;
+        if (!sceneRef.current) return;
+        if (pointerActive) {
+          const dx = e.clientX - pointerLastX;
+          const dy = e.clientY - pointerLastY;
+          sceneRef.current.globe.rotation.y += dx * 0.005;
+          sceneRef.current.globe.rotation.x += dy * 0.005;
+          sceneRef.current.globe.rotation.x = Math.max(-1.2, Math.min(1.2, sceneRef.current.globe.rotation.x));
+          pointerLastX = e.clientX;
+          pointerLastY = e.clientY;
+          setTooltip(null);
+        } else {
+          // Hover detection
+          handleHover(e.clientX, e.clientY);
+        }
       };
 
       const handleMouseUp = (e: MouseEvent) => {
@@ -289,6 +426,11 @@ export default function Globe({ detailers, onPinClick, focusAirport }: GlobeProp
         // Do NOT resume auto-rotate
       };
 
+      const handleMouseLeave = () => {
+        pointerActive = false;
+        setTooltip(null);
+      };
+
       const tryPinClick = (clientX: number, clientY: number) => {
         if (!sceneRef.current) return;
         const rect = el.getBoundingClientRect();
@@ -297,10 +439,69 @@ export default function Globe({ detailers, onPinClick, focusAirport }: GlobeProp
         raycaster.setFromCamera(mouse, camera);
         const meshes = sceneRef.current.pins.map((p: any) => p.mesh);
         const hits = raycaster.intersectObjects(meshes);
-        if (hits.length > 0) {
-          const hit = sceneRef.current.pins.find((p: any) => p.mesh === hits[0].object);
-          if (hit) onPinClickRef.current(hit.detailer);
+        if (hits.length === 0) return;
+        const hit = sceneRef.current.pins.find((p: any) => p.mesh === hits[0].object);
+        if (!hit) return;
+
+        const cluster: Cluster = hit.cluster;
+        if (cluster.detailers.length === 1) {
+          // Individual pin → open card
+          onPinClickRef.current(cluster.detailers[0]);
+        } else {
+          // Cluster → zoom in toward this cluster, rotate to center it
+          const currentZ = sceneRef.current.camera.position.z;
+          const targetZ = Math.max(2.0, currentZ * 0.6);
+          sceneRef.current.zoomTarget = targetZ;
+          sceneRef.current.targetRotation = {
+            y: -cluster.lng * (Math.PI / 180) - Math.PI / 2,
+            x: cluster.lat * (Math.PI / 180) * 0.5,
+          };
+          sceneRef.current.autoRotate = false;
         }
+      };
+
+      // Hover tooltip detection (desktop only)
+      const handleHover = (clientX: number, clientY: number) => {
+        if (!sceneRef.current) return;
+        const rect = el.getBoundingClientRect();
+        mouse.x = ((clientX - rect.left) / rect.width) * 2 - 1;
+        mouse.y = -((clientY - rect.top) / rect.height) * 2 + 1;
+        raycaster.setFromCamera(mouse, camera);
+        const meshes = sceneRef.current.pins.map((p: any) => p.mesh);
+        const hits = raycaster.intersectObjects(meshes);
+        if (hits.length === 0) {
+          setTooltip(null);
+          return;
+        }
+        const hit = sceneRef.current.pins.find((p: any) => p.mesh === hits[0].object);
+        if (!hit) {
+          setTooltip(null);
+          return;
+        }
+        const cluster: Cluster = hit.cluster;
+        const cameraZ = sceneRef.current.camera.position.z;
+        const lines: string[] = [];
+
+        if (cluster.detailers.length === 1) {
+          // Close zoom / individual: name + airport + booking badge
+          const d = cluster.detailers[0];
+          lines.push(d.company || d.name || 'Detailer');
+          if (d.home_airport) lines.push(d.home_airport);
+          if (d.has_online_booking) lines.push('● Online Booking');
+        } else if (cameraZ > 4.0) {
+          // Far cluster: top + count
+          const top = topDetailer(cluster.detailers);
+          lines.push(top.company || top.name || 'Detailer');
+          lines.push(`+${cluster.detailers.length - 1} more nearby`);
+        } else {
+          // Medium cluster: top 2-3
+          const sorted = [...cluster.detailers].sort((a, b) => (PLAN_TIER[b.plan] || 0) - (PLAN_TIER[a.plan] || 0));
+          const shown = sorted.slice(0, 3);
+          for (const d of shown) lines.push(d.company || d.name || 'Detailer');
+          if (sorted.length > 3) lines.push(`+${sorted.length - 3} more`);
+        }
+
+        setTooltip({ x: clientX - rect.left, y: clientY - rect.top, lines });
       };
 
       // ─── TOUCH (mobile) ───
@@ -335,7 +536,7 @@ export default function Globe({ detailers, onPinClick, focusAirport }: GlobeProp
           const currentDistance = Math.hypot(t2.clientX - t1.clientX, t2.clientY - t1.clientY);
           if (currentDistance > 0 && pinchStartDistance > 0) {
             const newZ = pinchStartCameraZ * (pinchStartDistance / currentDistance);
-            sceneRef.current.camera.position.z = Math.max(2.0, Math.min(5.0, newZ));
+            sceneRef.current.camera.position.z = Math.max(1.2, Math.min(6.0, newZ));
           }
           return;
         }
@@ -381,11 +582,23 @@ export default function Globe({ detailers, onPinClick, focusAirport }: GlobeProp
       dom.addEventListener('mousedown', handleMouseDown);
       dom.addEventListener('mousemove', handleMouseMove);
       dom.addEventListener('mouseup', handleMouseUp);
-      dom.addEventListener('mouseleave', handleMouseUp);
+      dom.addEventListener('mouseleave', handleMouseLeave);
       dom.addEventListener('touchstart', handleTouchStart, { passive: false });
       dom.addEventListener('touchmove', handleTouchMove, { passive: false });
       dom.addEventListener('touchend', handleTouchEnd, { passive: false });
       dom.addEventListener('touchcancel', handleTouchEnd, { passive: false });
+
+      // Debounced cluster rebuild on zoom changes
+      let clusterRebuildTimer: any = null;
+      const scheduleClusterRebuild = () => {
+        if (clusterRebuildTimer) clearTimeout(clusterRebuildTimer);
+        clusterRebuildTimer = setTimeout(() => {
+          if (sceneRef.current) {
+            buildPins();
+            sceneRef.current.lastClusterZ = sceneRef.current.camera.position.z;
+          }
+        }, 300);
+      };
 
       const animate = () => {
         if (disposed) return;
@@ -403,6 +616,23 @@ export default function Globe({ detailers, onPinClick, focusAirport }: GlobeProp
           if (Math.abs(s.targetRotation.y - s.globe.rotation.y) < 0.01) {
             s.targetRotation = null;
           }
+        }
+
+        // Smooth camera zoom animation (when triggered by cluster click)
+        if (s.zoomTarget != null) {
+          const diff = s.zoomTarget - s.camera.position.z;
+          if (Math.abs(diff) < 0.01) {
+            s.camera.position.z = s.zoomTarget;
+            s.zoomTarget = null;
+          } else {
+            s.camera.position.z += diff * 0.08;
+          }
+        }
+
+        // Detect zoom change and re-cluster (debounced)
+        if (Math.abs(s.camera.position.z - s.lastClusterZ) > 0.3) {
+          s.lastClusterZ = s.camera.position.z;
+          scheduleClusterRebuild();
         }
 
         renderer.render(scene, camera);
@@ -428,7 +658,7 @@ export default function Globe({ detailers, onPinClick, focusAirport }: GlobeProp
         dom.removeEventListener('mousedown', handleMouseDown);
         dom.removeEventListener('mousemove', handleMouseMove);
         dom.removeEventListener('mouseup', handleMouseUp);
-        dom.removeEventListener('mouseleave', handleMouseUp);
+        dom.removeEventListener('mouseleave', handleMouseLeave);
         dom.removeEventListener('touchstart', handleTouchStart);
         dom.removeEventListener('touchmove', handleTouchMove);
         dom.removeEventListener('touchend', handleTouchEnd);
@@ -470,7 +700,7 @@ export default function Globe({ detailers, onPinClick, focusAirport }: GlobeProp
     if (!sceneRef.current) return;
     const cam = sceneRef.current.camera;
     const delta = dir === 'in' ? -0.3 : 0.3;
-    cam.position.z = Math.max(2.0, Math.min(7.0, cam.position.z + delta));
+    cam.position.z = Math.max(1.2, Math.min(6.0, cam.position.z + delta));
   }, []);
 
   return (
@@ -479,6 +709,44 @@ export default function Globe({ detailers, onPinClick, focusAirport }: GlobeProp
         ref={mountRef}
         style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%' }}
       />
+
+      {/* Hover tooltip */}
+      {tooltip && (
+        <div
+          style={{
+            position: 'absolute',
+            left: tooltip.x + 14,
+            top: tooltip.y - 10,
+            zIndex: 20,
+            pointerEvents: 'none',
+            background: 'rgba(15, 22, 35, 0.95)',
+            border: '1px solid rgba(255,255,255,0.12)',
+            borderRadius: 8,
+            padding: '8px 12px',
+            backdropFilter: 'blur(8px)',
+            boxShadow: '0 4px 12px rgba(0,0,0,0.4)',
+            maxWidth: 240,
+          }}
+        >
+          {tooltip.lines.map((line, i) => (
+            <div
+              key={i}
+              style={{
+                color: i === 0 ? '#fff' : 'rgba(255,255,255,0.6)',
+                fontSize: i === 0 ? 13 : 11,
+                fontWeight: i === 0 ? 600 : 400,
+                lineHeight: 1.4,
+                whiteSpace: 'nowrap',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+              }}
+            >
+              {line}
+            </div>
+          ))}
+        </div>
+      )}
+
       <div style={{ position: 'absolute', bottom: 16, right: 16, display: 'flex', flexDirection: 'column', gap: 4, zIndex: 10 }}>
         <button
           onClick={() => handleZoom('in')}
