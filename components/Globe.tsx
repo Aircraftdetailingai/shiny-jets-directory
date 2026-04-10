@@ -2,6 +2,7 @@
 
 import { useRef, useEffect, useCallback } from 'react';
 import AIRPORTS from '@/lib/airports';
+import { feature } from 'topojson-client';
 
 interface Detailer {
   id: string;
@@ -20,38 +21,45 @@ interface GlobeProps {
   focusAirport?: string | null;
 }
 
-// Simplified continent polygons in lat/lng — rough outlines for recognizability
-// Format: arrays of [lat, lng] points forming each landmass
-const CONTINENTS: Array<Array<[number, number]>> = [
-  // North America
-  [[71, -156], [70, -141], [68, -133], [60, -141], [58, -152], [54, -162], [58, -135], [48, -125], [32, -117], [23, -106], [18, -95], [25, -82], [31, -81], [38, -76], [45, -66], [47, -52], [53, -56], [60, -64], [66, -62], [73, -78], [76, -96], [73, -115], [71, -156]],
-  // South America
-  [[12, -72], [8, -60], [5, -52], [0, -50], [-10, -35], [-23, -40], [-33, -52], [-45, -65], [-55, -68], [-55, -72], [-50, -75], [-38, -73], [-20, -72], [-5, -81], [5, -78], [12, -72]],
-  // Greenland
-  [[83, -35], [77, -18], [70, -22], [62, -42], [66, -52], [76, -60], [83, -35]],
-  // Europe
-  [[71, 25], [65, 40], [60, 30], [55, 20], [50, 15], [45, 5], [43, -9], [50, 0], [58, 10], [65, 12], [71, 25]],
-  // Africa
-  [[37, -8], [32, 10], [32, 22], [30, 32], [22, 37], [12, 43], [0, 42], [-10, 40], [-25, 32], [-35, 20], [-32, 18], [-18, 12], [-6, 9], [5, -3], [15, -17], [25, -15], [30, -9], [37, -8]],
-  // Asia (main mass)
-  [[72, 55], [75, 90], [72, 140], [65, 178], [60, 160], [55, 138], [50, 128], [35, 125], [22, 115], [10, 105], [5, 97], [20, 92], [25, 70], [35, 55], [45, 47], [55, 55], [65, 60], [72, 55]],
-  // India (connected below)
-  [[28, 68], [22, 72], [8, 77], [12, 80], [22, 88], [28, 88], [28, 68]],
-  // Southeast Asia (Indochina)
-  [[22, 100], [15, 100], [10, 105], [5, 102], [10, 110], [20, 108], [22, 100]],
-  // Australia
-  [[-10, 142], [-18, 146], [-28, 153], [-38, 147], [-37, 140], [-35, 117], [-32, 115], [-22, 113], [-14, 125], [-11, 130], [-10, 142]],
-  // Indonesia
-  [[-1, 100], [-4, 115], [-8, 125], [-8, 140], [-2, 135], [2, 128], [3, 115], [2, 100], [-1, 100]],
-  // UK + Ireland
-  [[58, -5], [55, -1], [50, 0], [50, -5], [55, -8], [58, -5]],
-  // Japan
-  [[45, 142], [40, 140], [35, 135], [32, 130], [35, 138], [40, 142], [45, 142]],
-  // Madagascar
-  [[-12, 49], [-17, 49], [-22, 47], [-25, 45], [-22, 43], [-15, 46], [-12, 49]],
-];
+// Cached GeoJSON features so we only fetch once
+let cachedFeatures: any[] | null = null;
 
-function drawGlobeTexture(): HTMLCanvasElement {
+async function loadCountries(): Promise<any[]> {
+  if (cachedFeatures) return cachedFeatures;
+  try {
+    const res = await fetch('https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json');
+    if (!res.ok) return [];
+    const topology = await res.json();
+    const fc: any = feature(topology, topology.objects.countries);
+    cachedFeatures = fc.features || [];
+    return cachedFeatures || [];
+  } catch (e) {
+    console.error('[Globe] Failed to load countries topology:', e);
+    return [];
+  }
+}
+
+// Helper: convert lng/lat to canvas x/y (equirectangular projection)
+function lngLatToXY(lng: number, lat: number, w: number, h: number): [number, number] {
+  const x = ((lng + 180) / 360) * w;
+  const y = ((90 - lat) / 180) * h;
+  return [x, y];
+}
+
+// Draw a GeoJSON polygon ring on canvas
+function drawRing(ctx: CanvasRenderingContext2D, ring: number[][], w: number, h: number) {
+  if (ring.length === 0) return;
+  ctx.beginPath();
+  for (let i = 0; i < ring.length; i++) {
+    const [lng, lat] = ring[i];
+    const [x, y] = lngLatToXY(lng, lat, w, h);
+    if (i === 0) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
+  }
+  ctx.closePath();
+}
+
+function drawGlobeTexture(features: any[]): HTMLCanvasElement {
   const w = 2048;
   const h = 1024;
   const canvas = document.createElement('canvas');
@@ -59,66 +67,44 @@ function drawGlobeTexture(): HTMLCanvasElement {
   canvas.height = h;
   const ctx = canvas.getContext('2d')!;
 
-  // Ocean — solid deep navy
+  // Ocean — deep navy
   ctx.fillStyle = '#001f3f';
   ctx.fillRect(0, 0, w, h);
 
-  // Helper: convert lat/lng to canvas x/y (equirectangular projection)
-  const toXY = (lat: number, lng: number): [number, number] => {
-    const x = ((lng + 180) / 360) * w;
-    const y = ((90 - lat) / 180) * h;
-    return [x, y];
-  };
-
-  // Draw continents — near-black filled shapes
+  // Draw all countries from real GeoJSON
   ctx.fillStyle = '#0d0f14';
-  ctx.strokeStyle = '#1a2030';
-  ctx.lineWidth = 3;
+  ctx.strokeStyle = '#1a2535';
+  ctx.lineWidth = 1.5;
 
-  for (const continent of CONTINENTS) {
-    ctx.beginPath();
-    for (let i = 0; i < continent.length; i++) {
-      const [lat, lng] = continent[i];
-      const [x, y] = toXY(lat, lng);
-      if (i === 0) ctx.moveTo(x, y);
-      else ctx.lineTo(x, y);
+  for (const f of features) {
+    const geom = f.geometry;
+    if (!geom) continue;
+    if (geom.type === 'Polygon') {
+      for (const ring of geom.coordinates) {
+        drawRing(ctx, ring, w, h);
+        ctx.fill();
+        ctx.stroke();
+      }
+    } else if (geom.type === 'MultiPolygon') {
+      for (const polygon of geom.coordinates) {
+        for (const ring of polygon) {
+          drawRing(ctx, ring, w, h);
+          ctx.fill();
+          ctx.stroke();
+        }
+      }
     }
-    ctx.closePath();
-    ctx.fill();
-    ctx.stroke();
   }
 
-  // Hex/honeycomb texture overlay across the whole globe
-  ctx.strokeStyle = 'rgba(255, 255, 255, 0.04)';
-  ctx.lineWidth = 1;
-  for (let x = 0; x < w; x += 24) {
-    for (let y = 0; y < h; y += 24) {
+  // Hex dot overlay across whole globe for texture
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.025)';
+  for (let x = 0; x < w; x += 22) {
+    for (let y = 0; y < h; y += 22) {
       ctx.beginPath();
-      ctx.arc(x, y, 4, 0, Math.PI * 2);
-      ctx.stroke();
+      ctx.arc(x + (y / 22 % 2 === 0 ? 0 : 11), y, 1.2, 0, Math.PI * 2);
+      ctx.fill();
     }
   }
-
-  // Brighter dot grid overlay on continents only (re-clip to land)
-  ctx.save();
-  ctx.beginPath();
-  for (const continent of CONTINENTS) {
-    for (let i = 0; i < continent.length; i++) {
-      const [lat, lng] = continent[i];
-      const [x, y] = toXY(lat, lng);
-      if (i === 0) ctx.moveTo(x, y);
-      else ctx.lineTo(x, y);
-    }
-    ctx.closePath();
-  }
-  ctx.clip();
-  ctx.fillStyle = 'rgba(120, 160, 220, 0.18)';
-  for (let x = 0; x < w; x += 16) {
-    for (let y = 0; y < h; y += 16) {
-      ctx.fillRect(x, y, 1.5, 1.5);
-    }
-  }
-  ctx.restore();
 
   return canvas;
 }
@@ -171,8 +157,10 @@ export default function Globe({ detailers, onPinClick, focusAirport }: GlobeProp
       pointLight.position.set(0, 0, 10);
       scene.add(pointLight);
 
-      // Generate canvas texture with continents — no external textures
-      const canvas = drawGlobeTexture();
+      // Load real country GeoJSON and generate canvas texture
+      const features = await loadCountries();
+      if (disposed) return;
+      const canvas = drawGlobeTexture(features);
       const canvasTexture = new THREE.CanvasTexture(canvas);
       canvasTexture.colorSpace = THREE.SRGBColorSpace;
       canvasTexture.needsUpdate = true;
