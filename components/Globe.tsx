@@ -236,50 +236,156 @@ export default function Globe({ detailers, onPinClick, focusAirport }: GlobeProp
       const raycaster = new THREE.Raycaster();
       const mouse = new THREE.Vector2();
 
-      const handlePointerDown = (e: PointerEvent) => {
-        if (!sceneRef.current) return;
-        sceneRef.current.isDragging = true;
-        sceneRef.current.autoRotate = false;
-        sceneRef.current.prevMouse = { x: e.clientX, y: e.clientY };
-        sceneRef.current.startMouse = { x: e.clientX, y: e.clientY };
+      // Pointer/mouse interaction state
+      let pointerActive = false;
+      let pointerStartX = 0;
+      let pointerStartY = 0;
+      let pointerLastX = 0;
+      let pointerLastY = 0;
+
+      // Touch state — track up to 2 fingers for pinch
+      let touchMode: 'none' | 'rotate' | 'pinch' = 'none';
+      let touchLastX = 0;
+      let touchLastY = 0;
+      let pinchStartDistance = 0;
+      let pinchStartCameraZ = 0;
+
+      const stopAutoRotate = () => {
+        if (sceneRef.current) sceneRef.current.autoRotate = false;
       };
 
-      const handlePointerMove = (e: PointerEvent) => {
-        if (!sceneRef.current?.isDragging) return;
-        const dx = e.clientX - sceneRef.current.prevMouse.x;
-        const dy = e.clientY - sceneRef.current.prevMouse.y;
+      // ─── MOUSE/POINTER (desktop) ───
+      const handleMouseDown = (e: MouseEvent) => {
+        if (!sceneRef.current) return;
+        pointerActive = true;
+        pointerStartX = e.clientX;
+        pointerStartY = e.clientY;
+        pointerLastX = e.clientX;
+        pointerLastY = e.clientY;
+        stopAutoRotate();
+      };
+
+      const handleMouseMove = (e: MouseEvent) => {
+        if (!pointerActive || !sceneRef.current) return;
+        const dx = e.clientX - pointerLastX;
+        const dy = e.clientY - pointerLastY;
         sceneRef.current.globe.rotation.y += dx * 0.005;
         sceneRef.current.globe.rotation.x += dy * 0.005;
         sceneRef.current.globe.rotation.x = Math.max(-1.2, Math.min(1.2, sceneRef.current.globe.rotation.x));
-        sceneRef.current.prevMouse = { x: e.clientX, y: e.clientY };
+        pointerLastX = e.clientX;
+        pointerLastY = e.clientY;
       };
 
-      const handlePointerUp = (e: PointerEvent) => {
-        if (!sceneRef.current) return;
-        const moved = Math.abs(e.clientX - sceneRef.current.startMouse.x) + Math.abs(e.clientY - sceneRef.current.startMouse.y);
-        sceneRef.current.isDragging = false;
+      const handleMouseUp = (e: MouseEvent) => {
+        if (!sceneRef.current || !pointerActive) return;
+        pointerActive = false;
+        // Click vs drag detection: 5px threshold from start position
+        const dx = e.clientX - pointerStartX;
+        const dy = e.clientY - pointerStartY;
+        const distance = Math.sqrt(dx * dx + dy * dy);
+        if (distance < 5) {
+          tryPinClick(e.clientX, e.clientY);
+        }
+        // Do NOT resume auto-rotate
+      };
 
-        if (moved < 5) {
-          const rect = el.getBoundingClientRect();
-          mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
-          mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
-          raycaster.setFromCamera(mouse, camera);
-          const meshes = sceneRef.current.pins.map((p: any) => p.mesh);
-          const hits = raycaster.intersectObjects(meshes);
-          if (hits.length > 0) {
-            const hit = sceneRef.current.pins.find((p: any) => p.mesh === hits[0].object);
-            if (hit) onPinClickRef.current(hit.detailer);
+      const tryPinClick = (clientX: number, clientY: number) => {
+        if (!sceneRef.current) return;
+        const rect = el.getBoundingClientRect();
+        mouse.x = ((clientX - rect.left) / rect.width) * 2 - 1;
+        mouse.y = -((clientY - rect.top) / rect.height) * 2 + 1;
+        raycaster.setFromCamera(mouse, camera);
+        const meshes = sceneRef.current.pins.map((p: any) => p.mesh);
+        const hits = raycaster.intersectObjects(meshes);
+        if (hits.length > 0) {
+          const hit = sceneRef.current.pins.find((p: any) => p.mesh === hits[0].object);
+          if (hit) onPinClickRef.current(hit.detailer);
+        }
+      };
+
+      // ─── TOUCH (mobile) ───
+      const handleTouchStart = (e: TouchEvent) => {
+        if (!sceneRef.current) return;
+        stopAutoRotate();
+
+        if (e.touches.length === 1) {
+          const t = e.touches[0];
+          touchMode = 'rotate';
+          touchLastX = t.clientX;
+          touchLastY = t.clientY;
+          pointerStartX = t.clientX;
+          pointerStartY = t.clientY;
+        } else if (e.touches.length === 2) {
+          touchMode = 'pinch';
+          const t1 = e.touches[0];
+          const t2 = e.touches[1];
+          pinchStartDistance = Math.hypot(t2.clientX - t1.clientX, t2.clientY - t1.clientY);
+          pinchStartCameraZ = sceneRef.current.camera.position.z;
+        }
+      };
+
+      const handleTouchMove = (e: TouchEvent) => {
+        if (!sceneRef.current) return;
+        // Prevent page scroll while interacting with the globe
+        e.preventDefault();
+
+        if (touchMode === 'pinch' && e.touches.length === 2) {
+          const t1 = e.touches[0];
+          const t2 = e.touches[1];
+          const currentDistance = Math.hypot(t2.clientX - t1.clientX, t2.clientY - t1.clientY);
+          if (currentDistance > 0 && pinchStartDistance > 0) {
+            const newZ = pinchStartCameraZ * (pinchStartDistance / currentDistance);
+            sceneRef.current.camera.position.z = Math.max(2.0, Math.min(5.0, newZ));
           }
+          return;
         }
 
-        setTimeout(() => {
-          if (sceneRef.current) sceneRef.current.autoRotate = true;
-        }, 3000);
+        if (touchMode === 'rotate' && e.touches.length === 1) {
+          const t = e.touches[0];
+          const dx = t.clientX - touchLastX;
+          const dy = t.clientY - touchLastY;
+          sceneRef.current.globe.rotation.y += dx * 0.005;
+          sceneRef.current.globe.rotation.x += dy * 0.005;
+          sceneRef.current.globe.rotation.x = Math.max(-1.2, Math.min(1.2, sceneRef.current.globe.rotation.x));
+          touchLastX = t.clientX;
+          touchLastY = t.clientY;
+        }
       };
 
-      renderer.domElement.addEventListener('pointerdown', handlePointerDown);
-      renderer.domElement.addEventListener('pointermove', handlePointerMove);
-      renderer.domElement.addEventListener('pointerup', handlePointerUp);
+      const handleTouchEnd = (e: TouchEvent) => {
+        if (!sceneRef.current) return;
+        // If we were in single-touch rotate mode and finger barely moved, treat as tap
+        if (touchMode === 'rotate' && e.changedTouches.length > 0) {
+          const t = e.changedTouches[0];
+          const dx = t.clientX - pointerStartX;
+          const dy = t.clientY - pointerStartY;
+          const distance = Math.sqrt(dx * dx + dy * dy);
+          if (distance < 10) {
+            tryPinClick(t.clientX, t.clientY);
+          }
+        }
+        // Transition to remaining touches
+        if (e.touches.length === 1) {
+          const t = e.touches[0];
+          touchMode = 'rotate';
+          touchLastX = t.clientX;
+          touchLastY = t.clientY;
+          pointerStartX = t.clientX;
+          pointerStartY = t.clientY;
+        } else if (e.touches.length === 0) {
+          touchMode = 'none';
+        }
+      };
+
+      const dom = renderer.domElement;
+      dom.addEventListener('mousedown', handleMouseDown);
+      dom.addEventListener('mousemove', handleMouseMove);
+      dom.addEventListener('mouseup', handleMouseUp);
+      dom.addEventListener('mouseleave', handleMouseUp);
+      dom.addEventListener('touchstart', handleTouchStart, { passive: false });
+      dom.addEventListener('touchmove', handleTouchMove, { passive: false });
+      dom.addEventListener('touchend', handleTouchEnd, { passive: false });
+      dom.addEventListener('touchcancel', handleTouchEnd, { passive: false });
 
       const animate = () => {
         if (disposed) return;
@@ -288,7 +394,7 @@ export default function Globe({ detailers, onPinClick, focusAirport }: GlobeProp
         const s = sceneRef.current;
 
         if (s.autoRotate) {
-          s.globe.rotation.y += 0.0008;
+          s.globe.rotation.y += 0.002;
         }
 
         if (s.targetRotation) {
@@ -319,9 +425,14 @@ export default function Globe({ detailers, onPinClick, focusAirport }: GlobeProp
         cancelAnimationFrame(frameId);
         window.removeEventListener('resize', handleResize);
         window.removeEventListener('orientationchange', handleResize);
-        renderer.domElement.removeEventListener('pointerdown', handlePointerDown);
-        renderer.domElement.removeEventListener('pointermove', handlePointerMove);
-        renderer.domElement.removeEventListener('pointerup', handlePointerUp);
+        dom.removeEventListener('mousedown', handleMouseDown);
+        dom.removeEventListener('mousemove', handleMouseMove);
+        dom.removeEventListener('mouseup', handleMouseUp);
+        dom.removeEventListener('mouseleave', handleMouseUp);
+        dom.removeEventListener('touchstart', handleTouchStart);
+        dom.removeEventListener('touchmove', handleTouchMove);
+        dom.removeEventListener('touchend', handleTouchEnd);
+        dom.removeEventListener('touchcancel', handleTouchEnd);
         renderer.dispose();
         if (el.contains(renderer.domElement)) {
           el.removeChild(renderer.domElement);
