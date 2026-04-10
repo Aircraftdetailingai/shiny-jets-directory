@@ -59,12 +59,8 @@ function drawGlobeTexture(): HTMLCanvasElement {
   canvas.height = h;
   const ctx = canvas.getContext('2d')!;
 
-  // Ocean gradient — deep navy with subtle variation
-  const gradient = ctx.createLinearGradient(0, 0, 0, h);
-  gradient.addColorStop(0, '#001a33');
-  gradient.addColorStop(0.5, '#001f3f');
-  gradient.addColorStop(1, '#001a33');
-  ctx.fillStyle = gradient;
+  // Ocean — solid deep navy
+  ctx.fillStyle = '#001f3f';
   ctx.fillRect(0, 0, w, h);
 
   // Helper: convert lat/lng to canvas x/y (equirectangular projection)
@@ -74,10 +70,10 @@ function drawGlobeTexture(): HTMLCanvasElement {
     return [x, y];
   };
 
-  // Draw continents
-  ctx.fillStyle = '#0d1520';
-  ctx.strokeStyle = '#1a2530';
-  ctx.lineWidth = 2;
+  // Draw continents — near-black filled shapes
+  ctx.fillStyle = '#0d0f14';
+  ctx.strokeStyle = '#1a2030';
+  ctx.lineWidth = 3;
 
   for (const continent of CONTINENTS) {
     ctx.beginPath();
@@ -91,6 +87,38 @@ function drawGlobeTexture(): HTMLCanvasElement {
     ctx.fill();
     ctx.stroke();
   }
+
+  // Hex/honeycomb texture overlay across the whole globe
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.04)';
+  ctx.lineWidth = 1;
+  for (let x = 0; x < w; x += 24) {
+    for (let y = 0; y < h; y += 24) {
+      ctx.beginPath();
+      ctx.arc(x, y, 4, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+  }
+
+  // Brighter dot grid overlay on continents only (re-clip to land)
+  ctx.save();
+  ctx.beginPath();
+  for (const continent of CONTINENTS) {
+    for (let i = 0; i < continent.length; i++) {
+      const [lat, lng] = continent[i];
+      const [x, y] = toXY(lat, lng);
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    }
+    ctx.closePath();
+  }
+  ctx.clip();
+  ctx.fillStyle = 'rgba(120, 160, 220, 0.18)';
+  for (let x = 0; x < w; x += 16) {
+    for (let y = 0; y < h; y += 16) {
+      ctx.fillRect(x, y, 1.5, 1.5);
+    }
+  }
+  ctx.restore();
 
   return canvas;
 }
@@ -133,25 +161,28 @@ export default function Globe({ detailers, onPinClick, focusAirport }: GlobeProp
       const camera = new THREE.PerspectiveCamera(45, w / h, 0.1, 1000);
       camera.position.z = 4;
 
-      // Lights — bright enough to see continents
-      const ambient = new THREE.AmbientLight(0xffffff, 0.8);
+      // Lights — per spec: ambient blue, directional white, point light for atmosphere
+      const ambient = new THREE.AmbientLight(0x4488ff, 0.6);
       scene.add(ambient);
-      const directional = new THREE.DirectionalLight(0xffffff, 1.2);
+      const directional = new THREE.DirectionalLight(0xffffff, 1.0);
       directional.position.set(5, 3, 5);
       scene.add(directional);
+      const pointLight = new THREE.PointLight(0x4488ff, 0.3);
+      pointLight.position.set(0, 0, 10);
+      scene.add(pointLight);
 
-      // Generate canvas texture with continents
+      // Generate canvas texture with continents — no external textures
       const canvas = drawGlobeTexture();
       const canvasTexture = new THREE.CanvasTexture(canvas);
       canvasTexture.colorSpace = THREE.SRGBColorSpace;
+      canvasTexture.needsUpdate = true;
 
-      // Globe sphere — larger radius
+      // Globe sphere — larger radius for prominence
       const globeRadius = 2.0;
       const globeGeom = new THREE.SphereGeometry(globeRadius, 64, 64);
       const globeMat = new THREE.MeshPhongMaterial({
         map: canvasTexture,
-        shininess: 20,
-        specular: 0x222233,
+        shininess: 5,
       });
       const globe = new THREE.Mesh(globeGeom, globeMat);
       scene.add(globe);
