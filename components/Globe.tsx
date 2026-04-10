@@ -20,6 +20,81 @@ interface GlobeProps {
   focusAirport?: string | null;
 }
 
+// Simplified continent polygons in lat/lng — rough outlines for recognizability
+// Format: arrays of [lat, lng] points forming each landmass
+const CONTINENTS: Array<Array<[number, number]>> = [
+  // North America
+  [[71, -156], [70, -141], [68, -133], [60, -141], [58, -152], [54, -162], [58, -135], [48, -125], [32, -117], [23, -106], [18, -95], [25, -82], [31, -81], [38, -76], [45, -66], [47, -52], [53, -56], [60, -64], [66, -62], [73, -78], [76, -96], [73, -115], [71, -156]],
+  // South America
+  [[12, -72], [8, -60], [5, -52], [0, -50], [-10, -35], [-23, -40], [-33, -52], [-45, -65], [-55, -68], [-55, -72], [-50, -75], [-38, -73], [-20, -72], [-5, -81], [5, -78], [12, -72]],
+  // Greenland
+  [[83, -35], [77, -18], [70, -22], [62, -42], [66, -52], [76, -60], [83, -35]],
+  // Europe
+  [[71, 25], [65, 40], [60, 30], [55, 20], [50, 15], [45, 5], [43, -9], [50, 0], [58, 10], [65, 12], [71, 25]],
+  // Africa
+  [[37, -8], [32, 10], [32, 22], [30, 32], [22, 37], [12, 43], [0, 42], [-10, 40], [-25, 32], [-35, 20], [-32, 18], [-18, 12], [-6, 9], [5, -3], [15, -17], [25, -15], [30, -9], [37, -8]],
+  // Asia (main mass)
+  [[72, 55], [75, 90], [72, 140], [65, 178], [60, 160], [55, 138], [50, 128], [35, 125], [22, 115], [10, 105], [5, 97], [20, 92], [25, 70], [35, 55], [45, 47], [55, 55], [65, 60], [72, 55]],
+  // India (connected below)
+  [[28, 68], [22, 72], [8, 77], [12, 80], [22, 88], [28, 88], [28, 68]],
+  // Southeast Asia (Indochina)
+  [[22, 100], [15, 100], [10, 105], [5, 102], [10, 110], [20, 108], [22, 100]],
+  // Australia
+  [[-10, 142], [-18, 146], [-28, 153], [-38, 147], [-37, 140], [-35, 117], [-32, 115], [-22, 113], [-14, 125], [-11, 130], [-10, 142]],
+  // Indonesia
+  [[-1, 100], [-4, 115], [-8, 125], [-8, 140], [-2, 135], [2, 128], [3, 115], [2, 100], [-1, 100]],
+  // UK + Ireland
+  [[58, -5], [55, -1], [50, 0], [50, -5], [55, -8], [58, -5]],
+  // Japan
+  [[45, 142], [40, 140], [35, 135], [32, 130], [35, 138], [40, 142], [45, 142]],
+  // Madagascar
+  [[-12, 49], [-17, 49], [-22, 47], [-25, 45], [-22, 43], [-15, 46], [-12, 49]],
+];
+
+function drawGlobeTexture(): HTMLCanvasElement {
+  const w = 2048;
+  const h = 1024;
+  const canvas = document.createElement('canvas');
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext('2d')!;
+
+  // Ocean gradient — deep navy with subtle variation
+  const gradient = ctx.createLinearGradient(0, 0, 0, h);
+  gradient.addColorStop(0, '#001a33');
+  gradient.addColorStop(0.5, '#001f3f');
+  gradient.addColorStop(1, '#001a33');
+  ctx.fillStyle = gradient;
+  ctx.fillRect(0, 0, w, h);
+
+  // Helper: convert lat/lng to canvas x/y (equirectangular projection)
+  const toXY = (lat: number, lng: number): [number, number] => {
+    const x = ((lng + 180) / 360) * w;
+    const y = ((90 - lat) / 180) * h;
+    return [x, y];
+  };
+
+  // Draw continents
+  ctx.fillStyle = '#0d1520';
+  ctx.strokeStyle = '#1a2530';
+  ctx.lineWidth = 2;
+
+  for (const continent of CONTINENTS) {
+    ctx.beginPath();
+    for (let i = 0; i < continent.length; i++) {
+      const [lat, lng] = continent[i];
+      const [x, y] = toXY(lat, lng);
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    }
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+  }
+
+  return canvas;
+}
+
 export default function Globe({ detailers, onPinClick, focusAirport }: GlobeProps) {
   const mountRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<any>(null);
@@ -56,105 +131,71 @@ export default function Globe({ detailers, onPinClick, focusAirport }: GlobeProp
 
       const scene = new THREE.Scene();
       const camera = new THREE.PerspectiveCamera(45, w / h, 0.1, 1000);
-      camera.position.z = 3.2;
+      camera.position.z = 4;
 
-      // Lights
-      const ambient = new THREE.AmbientLight(0xffffff, 1.5);
+      // Lights — bright enough to see continents
+      const ambient = new THREE.AmbientLight(0xffffff, 0.8);
       scene.add(ambient);
-      const directional = new THREE.DirectionalLight(0x88aacc, 0.6);
+      const directional = new THREE.DirectionalLight(0xffffff, 1.2);
       directional.position.set(5, 3, 5);
       scene.add(directional);
 
-      // Load earth texture
-      const textureLoader = new THREE.TextureLoader();
-      const earthTexture = await new Promise<any>((resolve) => {
-        textureLoader.load(
-          'https://unpkg.com/three-globe/example/img/earth-dark.jpg',
-          (tex: any) => resolve(tex),
-          undefined,
-          () => resolve(null)
-        );
+      // Generate canvas texture with continents
+      const canvas = drawGlobeTexture();
+      const canvasTexture = new THREE.CanvasTexture(canvas);
+      canvasTexture.colorSpace = THREE.SRGBColorSpace;
+
+      // Globe sphere — larger radius
+      const globeRadius = 2.0;
+      const globeGeom = new THREE.SphereGeometry(globeRadius, 64, 64);
+      const globeMat = new THREE.MeshPhongMaterial({
+        map: canvasTexture,
+        shininess: 20,
+        specular: 0x222233,
       });
-
-      if (disposed) return;
-
-      // Globe sphere with texture
-      const globeGeom = new THREE.SphereGeometry(1, 64, 64);
-      let globeMat;
-      if (earthTexture) {
-        globeMat = new THREE.MeshPhongMaterial({
-          map: earthTexture,
-          color: 0x0d1520,
-          emissive: 0x001830,
-          emissiveIntensity: 0.3,
-          shininess: 15,
-          specular: 0x111122,
-        });
-      } else {
-        // Fallback if texture fails to load
-        globeMat = new THREE.MeshPhongMaterial({
-          color: 0x001f3f,
-          shininess: 25,
-          specular: 0x112244,
-        });
-      }
       const globe = new THREE.Mesh(globeGeom, globeMat);
       scene.add(globe);
 
       // Atmosphere glow
-      const glowGeom = new THREE.SphereGeometry(1.025, 64, 64);
+      const glowGeom = new THREE.SphereGeometry(globeRadius * 1.03, 64, 64);
       const glowMat = new THREE.MeshBasicMaterial({
-        color: 0x0066aa,
+        color: 0x0088cc,
         transparent: true,
-        opacity: 0.1,
+        opacity: 0.12,
         side: THREE.BackSide,
       });
       scene.add(new THREE.Mesh(glowGeom, glowMat));
 
       // Outer rim glow
-      const rimGeom = new THREE.SphereGeometry(1.08, 64, 64);
+      const rimGeom = new THREE.SphereGeometry(globeRadius * 1.08, 64, 64);
       const rimMat = new THREE.MeshBasicMaterial({
-        color: 0x0088cc,
+        color: 0x0099dd,
         transparent: true,
-        opacity: 0.05,
+        opacity: 0.06,
         side: THREE.BackSide,
       });
       scene.add(new THREE.Mesh(rimGeom, rimMat));
 
       // Pins
       const pins: { mesh: any; detailer: Detailer }[] = [];
-      const pinGeom = new THREE.SphereGeometry(0.015, 8, 8);
+      const pinGeom = new THREE.SphereGeometry(0.025, 8, 8);
 
       detailers.forEach(d => {
         const coords = AIRPORTS[d.home_airport?.toUpperCase()];
         if (!coords) return;
         const [lat, lng] = coords;
-        const pos = latLngToVector3(lat, lng, 1.015);
+        const pos = latLngToVector3(lat, lng, globeRadius * 1.01);
 
         const pinMat = new THREE.MeshBasicMaterial({ color: 0x00aaff });
         const pin = new THREE.Mesh(pinGeom, pinMat);
         pin.position.copy(pos);
         globe.add(pin);
 
-        // Bright center dot
-        const dotGeom = new THREE.SphereGeometry(0.006, 6, 6);
+        const dotGeom = new THREE.SphereGeometry(0.01, 6, 6);
         const dotMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
         const dot = new THREE.Mesh(dotGeom, dotMat);
         dot.position.copy(pos);
         globe.add(dot);
-
-        // Pulse ring
-        const ringGeom = new THREE.RingGeometry(0.018, 0.025, 16);
-        const ringMat = new THREE.MeshBasicMaterial({
-          color: 0x00aaff,
-          transparent: true,
-          opacity: 0.3,
-          side: THREE.DoubleSide,
-        });
-        const ring = new THREE.Mesh(ringGeom, ringMat);
-        ring.position.copy(pos);
-        ring.lookAt(new THREE.Vector3(0, 0, 0));
-        globe.add(ring);
 
         pins.push({ mesh: pin, detailer: d });
       });
@@ -168,7 +209,6 @@ export default function Globe({ detailers, onPinClick, focusAirport }: GlobeProp
         targetRotation: null,
       };
 
-      // Raycaster for pin clicks
       const raycaster = new THREE.Raycaster();
       const mouse = new THREE.Vector2();
 
@@ -217,7 +257,6 @@ export default function Globe({ detailers, onPinClick, focusAirport }: GlobeProp
       renderer.domElement.addEventListener('pointermove', handlePointerMove);
       renderer.domElement.addEventListener('pointerup', handlePointerUp);
 
-      // Animation loop
       const animate = () => {
         if (disposed) return;
         frameId = requestAnimationFrame(animate);
@@ -240,7 +279,6 @@ export default function Globe({ detailers, onPinClick, focusAirport }: GlobeProp
       };
       animate();
 
-      // Resize handler
       const handleResize = () => {
         if (!mountRef.current) return;
         const nw = mountRef.current.clientWidth || 800;
@@ -294,7 +332,7 @@ export default function Globe({ detailers, onPinClick, focusAirport }: GlobeProp
     if (!sceneRef.current) return;
     const cam = sceneRef.current.camera;
     const delta = dir === 'in' ? -0.3 : 0.3;
-    cam.position.z = Math.max(2.0, Math.min(5.0, cam.position.z + delta));
+    cam.position.z = Math.max(2.5, Math.min(6.0, cam.position.z + delta));
   }, []);
 
   return (
