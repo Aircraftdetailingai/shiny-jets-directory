@@ -136,8 +136,8 @@ export default function DirectoryPage() {
       {selected && (
         <>
           <div className="fixed inset-0 bg-black/40 z-30 md:bg-transparent" onClick={() => setSelected(null)} />
-          <div className="fixed bottom-0 left-0 right-0 md:bottom-auto md:top-0 md:right-0 md:left-auto md:w-[400px] md:h-full z-40 animate-slide-in">
-            <div className="bg-[#0f1623] border-t md:border-l border-white/10 rounded-t-2xl md:rounded-none md:h-full flex flex-col overflow-hidden shadow-2xl">
+          <div className="fixed bottom-0 left-0 right-0 md:bottom-auto md:top-0 md:right-0 md:left-auto md:w-[400px] md:h-full z-40 animate-slide-in" style={{ maxHeight: '85vh' }}>
+            <div className="bg-[#0f1623] border-t md:border-l border-white/10 rounded-t-2xl md:rounded-none h-full md:h-screen flex flex-col overflow-hidden shadow-2xl">
               {/* Close */}
               <div className="flex items-center justify-between px-5 pt-5 pb-2">
                 <span className="text-[10px] uppercase tracking-wider text-white/30">Detailer Profile</span>
@@ -257,6 +257,13 @@ export default function DirectoryPage() {
                   className="block w-full py-3.5 bg-blue-500 hover:bg-blue-600 text-white text-center text-sm font-semibold rounded-lg transition-colors"
                 >
                   Request a Quote
+                </a>
+
+                <a
+                  href={`https://directory.shinyjets.com/detailer/${slug}`}
+                  className="block text-center text-white/40 text-xs mt-3 hover:text-white/60 transition-colors"
+                >
+                  View full profile &rarr;
                 </a>
               </div>
             </div>

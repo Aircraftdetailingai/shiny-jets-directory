@@ -97,7 +97,7 @@ let cachedFeatures: any[] | null = null;
 async function loadCountries(): Promise<any[]> {
   if (cachedFeatures) return cachedFeatures;
   try {
-    const res = await fetch('https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json');
+    const res = await fetch('https://cdn.jsdelivr.net/npm/world-atlas@2/countries-50m.json');
     if (!res.ok) return [];
     const topology = await res.json();
     const fc: any = feature(topology, topology.objects.countries);
