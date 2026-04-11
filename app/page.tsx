@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import dynamic from 'next/dynamic';
+import { getAirportInfo } from '@/lib/airport-cities';
 
 const Globe = dynamic(() => import('@/components/Globe'), { ssr: false });
 
@@ -19,6 +20,12 @@ interface Detailer {
   country?: string;
   avg_rating?: number;
   review_count?: number;
+  services?: string[];
+  certifications?: string[];
+  directory_description?: string;
+  airports_served?: string[];
+  verified_finish?: boolean;
+  insurance_verified?: boolean;
 }
 
 export default function DirectoryPage() {
@@ -33,7 +40,14 @@ export default function DirectoryPage() {
       .then(r => r.ok ? r.json() : { detailers: [] })
       .then(d => {
         console.log('[directory] detailers fetched:', d?.detailers?.length, d?.detailers?.map((x: any) => ({ company: x.company, airport: x.home_airport })));
-        setDetailers(d.detailers || d || []);
+        // Normalize: convert nulls to undefined so optional types work
+        const normalized: Detailer[] = (d.detailers || d || []).map((x: any) => ({
+          ...x,
+          logo_url: x.logo_url || undefined,
+          directory_description: x.directory_description || undefined,
+          home_airport: x.home_airport || '',
+        }));
+        setDetailers(normalized);
       })
       .catch(() => {})
       .finally(() => setLoading(false));
@@ -134,44 +148,106 @@ export default function DirectoryPage() {
                 {/* Logo + Name */}
                 <div className="flex items-center gap-4 mb-5">
                   {selected.logo_url ? (
-                    <img src={selected.logo_url} alt="" className="w-14 h-14 rounded-xl object-cover border border-white/10" />
-                  ) : (
-                    <div className="w-14 h-14 rounded-xl bg-blue-500/20 flex items-center justify-center text-blue-400 text-xl font-bold">
+                    <img
+                      src={selected.logo_url}
+                      alt={selected.company || ''}
+                      className="w-16 h-16 rounded-xl object-contain bg-white p-1 border border-white/10 flex-shrink-0"
+                      onError={(e) => {
+                        e.currentTarget.style.display = 'none';
+                        const fallback = e.currentTarget.nextElementSibling as HTMLElement | null;
+                        if (fallback) fallback.style.display = 'flex';
+                      }}
+                    />
+                  ) : null}
+                  {!selected.logo_url && (
+                    <div className="w-16 h-16 rounded-xl bg-blue-500/20 flex items-center justify-center text-blue-400 text-2xl font-bold flex-shrink-0">
                       {selected.company?.charAt(0) || '?'}
                     </div>
                   )}
-                  <div>
-                    <h2 className="text-white text-lg font-semibold">{selected.company || selected.name}</h2>
-                    {selected.avg_rating && (
+                  <div className="min-w-0">
+                    <h2 className="text-white text-lg font-semibold truncate">{selected.company || selected.name}</h2>
+                    {selected.avg_rating ? (
                       <div className="flex items-center gap-1 mt-0.5">
-                        <span className="text-yellow-400 text-xs">{'*'.repeat(Math.round(selected.avg_rating))}</span>
+                        <span className="text-yellow-400 text-xs">{'★'.repeat(Math.round(selected.avg_rating))}</span>
                         <span className="text-white/40 text-xs">{selected.avg_rating.toFixed(1)} ({selected.review_count})</span>
                       </div>
-                    )}
+                    ) : null}
                   </div>
                 </div>
 
-                {/* Airport */}
-                {selected.home_airport && (
-                  <div className="mb-4">
-                    <p className="text-[10px] uppercase tracking-wider text-white/30 mb-1.5">Home Airport</p>
-                    <span className="inline-block px-3 py-1.5 bg-blue-500/10 border border-blue-500/20 rounded-lg text-blue-400 text-sm font-medium">
-                      {selected.home_airport}
-                    </span>
-                  </div>
+                {/* Airport + City */}
+                {selected.home_airport && (() => {
+                  const info = getAirportInfo(selected.home_airport);
+                  const cityState = info ? `${info.city}, ${info.state}` : null;
+                  return (
+                    <div className="mb-4">
+                      <p className="text-[10px] uppercase tracking-wider text-white/30 mb-1.5">Home Airport</p>
+                      <span className="inline-block px-3 py-1.5 bg-blue-500/10 border border-blue-500/20 rounded-lg text-blue-400 text-sm font-medium">
+                        {selected.home_airport}{cityState ? ` · ${cityState}` : ''}
+                      </span>
+                    </div>
+                  );
+                })()}
+
+                {/* Bio / About */}
+                {selected.directory_description && (
+                  <p className="text-white/60 text-xs leading-relaxed mb-4 line-clamp-2">
+                    {selected.directory_description}
+                  </p>
                 )}
 
                 {/* Badges */}
                 <div className="flex flex-wrap gap-2 mb-5">
                   {selected.has_online_booking && (
                     <span className="px-3 py-1 bg-green-500/10 border border-green-500/20 rounded-full text-green-400 text-xs font-medium">
-                      Online Booking
+                      ● Online Booking
                     </span>
                   )}
-                  <span className="px-3 py-1 bg-white/5 border border-white/10 rounded-full text-white/50 text-xs">
-                    {selected.plan === 'enterprise' ? 'Enterprise' : selected.plan === 'business' ? 'Business' : 'Pro'}
-                  </span>
+                  {selected.insurance_verified && (
+                    <span className="px-3 py-1 bg-blue-500/10 border border-blue-500/20 rounded-full text-blue-400 text-xs font-medium">
+                      Insured
+                    </span>
+                  )}
+                  {selected.verified_finish && (
+                    <span className="px-3 py-1 bg-amber-500/10 border border-amber-500/20 rounded-full text-amber-400 text-xs font-medium">
+                      Verified Finish
+                    </span>
+                  )}
                 </div>
+
+                {/* Services */}
+                {selected.services && selected.services.length > 0 && (
+                  <div className="mb-5">
+                    <p className="text-[10px] uppercase tracking-wider text-white/30 mb-2">Services</p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {selected.services.slice(0, 5).map((svc, i) => (
+                        <span key={i} className="px-2.5 py-1 bg-white/[0.06] border border-white/10 rounded-full text-white/70 text-[11px]">
+                          {svc}
+                        </span>
+                      ))}
+                      {selected.services.length > 5 && (
+                        <span className="px-2.5 py-1 text-white/40 text-[11px]">
+                          +{selected.services.length - 5} more
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* Certifications */}
+                {selected.certifications && selected.certifications.length > 0 && (
+                  <div className="mb-5">
+                    <p className="text-[10px] uppercase tracking-wider text-white/30 mb-1.5">Certifications</p>
+                    <ul className="text-white/60 text-xs space-y-1">
+                      {selected.certifications.map((cert, i) => (
+                        <li key={i} className="flex items-start gap-1.5">
+                          <span className="text-white/30 mt-0.5">•</span>
+                          <span>{cert}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
 
                 {/* CTA */}
                 <a
