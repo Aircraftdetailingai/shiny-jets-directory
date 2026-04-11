@@ -302,45 +302,54 @@ export default function Globe({ detailers, onPinClick, focusAirport }: GlobeProp
 
         for (const cluster of clusters) {
           const { lat, lng, detailers: items } = cluster;
-          // Position pins clearly above the globe surface so they're not hidden by the sphere
-          const pos = latLngToVector3(lat, lng, globeRadius * 1.025);
+          // Position pins just above the globe surface (small offset since pins are tiny)
+          const pos = latLngToVector3(lat, lng, globeRadius * 1.005);
 
           const group = new THREE.Group();
           group.position.copy(pos);
 
           let pinRadius: number;
           let pinColor: number;
+          let pinEmissive: number;
 
           if (items.length === 1) {
-            pinRadius = 0.028;
+            pinRadius = 0.012;
             pinColor = 0x0081b8; // bright blue per spec
+            pinEmissive = 0x004488;
           } else if (items.length <= 3) {
-            pinRadius = 0.038;
+            pinRadius = 0.018;
             pinColor = 0xeab308; // gold
+            pinEmissive = 0x6b4f00;
           } else {
-            pinRadius = 0.048 + Math.min(0.02, items.length * 0.001);
+            pinRadius = 0.022;
             pinColor = 0xeab308;
+            pinEmissive = 0x6b4f00;
           }
 
           // Sphere mesh — this is what the raycaster hits
           const sphereGeom = new THREE.SphereGeometry(pinRadius, 16, 16);
-          const sphereMat = new THREE.MeshBasicMaterial({ color: pinColor });
+          const sphereMat = new THREE.MeshPhongMaterial({
+            color: pinColor,
+            emissive: pinEmissive,
+            emissiveIntensity: 0.3,
+            shininess: 80,
+          });
           const sphere = new THREE.Mesh(sphereGeom, sphereMat);
           group.add(sphere);
 
           // White center dot for visibility
-          const dotGeom = new THREE.SphereGeometry(pinRadius * 0.4, 8, 8);
+          const dotGeom = new THREE.SphereGeometry(pinRadius * 0.45, 8, 8);
           const dotMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
           const dot = new THREE.Mesh(dotGeom, dotMat);
           group.add(dot);
 
           // Halo ring for clusters with 2+ items
           if (items.length > 1) {
-            const ringGeom = new THREE.RingGeometry(pinRadius * 1.3, pinRadius * 1.6, 24);
+            const ringGeom = new THREE.RingGeometry(pinRadius * 1.4, pinRadius * 1.7, 24);
             const ringMat = new THREE.MeshBasicMaterial({
               color: pinColor,
               transparent: true,
-              opacity: 0.4,
+              opacity: 0.5,
               side: THREE.DoubleSide,
             });
             const ring = new THREE.Mesh(ringGeom, ringMat);
@@ -632,6 +641,13 @@ export default function Globe({ detailers, onPinClick, focusAirport }: GlobeProp
           } else {
             s.camera.position.z += diff * 0.08;
           }
+        }
+
+        // Screen-space pin scaling — keep pins the same visual size at any zoom
+        // Scale proportional to camera distance so closer = smaller 3D size, further = larger
+        const scaleFactor = s.camera.position.z / 3.5;
+        for (const p of s.pins) {
+          p.group.scale.setScalar(scaleFactor);
         }
 
         // Detect zoom change and re-cluster (debounced)
