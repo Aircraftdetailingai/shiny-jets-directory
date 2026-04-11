@@ -133,9 +133,9 @@ export default async function DetailerProfilePage({ params }: { params: Promise<
       {/* Header */}
       <header className="border-b border-white/10 bg-[#0a0e1a]/90 backdrop-blur-sm sticky top-0 z-20">
         <div className="max-w-5xl mx-auto px-6 py-4 flex items-center justify-between">
-          <a href="/" className="flex items-center gap-2.5">
+          <a href="https://shinyjets.com" className="flex items-center gap-2.5">
             <img src="https://shinyjets.com/logo.png" alt="Shiny Jets" className="h-8 object-contain" />
-            <span className="text-white font-semibold tracking-tight">Shiny Jets Directory</span>
+            <span className="text-white font-semibold tracking-tight">Shiny Jets</span>
           </a>
           <a href="/" className="text-xs text-white/60 hover:text-white">&larr; Back to directory</a>
         </div>
@@ -149,7 +149,7 @@ export default async function DetailerProfilePage({ params }: { params: Promise<
               <img
                 src={detailer.logo_url}
                 alt={`${detailer.company} logo`}
-                className="w-24 h-24 md:w-32 md:h-32 rounded-2xl object-cover border border-white/10 bg-white/5"
+                className="w-24 h-24 md:w-32 md:h-32 rounded-2xl object-contain border border-white/10 bg-[#0d1520]"
               />
             ) : (
               <div
@@ -193,7 +193,7 @@ export default async function DetailerProfilePage({ params }: { params: Promise<
               )}
               {detailer.insured && (
                 <span className="px-3 py-1 text-xs font-medium rounded-full bg-blue-500/10 border border-blue-500/30 text-blue-400">
-                  Insured{detailer.insurer ? ` · ${detailer.insurer}` : ''}
+                  Insured
                 </span>
               )}
               {detailer.verified_finish && (
@@ -224,9 +224,9 @@ export default async function DetailerProfilePage({ params }: { params: Promise<
         )}
 
         {/* Services */}
-        {detailer.services && detailer.services.length > 0 && (
-          <section className="mb-10">
-            <h2 className="text-xs uppercase tracking-widest text-white/40 mb-3">Services</h2>
+        <section className="mb-10">
+          <h2 className="text-xs uppercase tracking-widest text-white/40 mb-3">Services</h2>
+          {detailer.services && detailer.services.length > 0 ? (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
               {detailer.services.map((s, i) => (
                 <div key={i} className="bg-white/[0.03] border border-white/10 rounded-lg p-4">
@@ -235,8 +235,10 @@ export default async function DetailerProfilePage({ params }: { params: Promise<
                 </div>
               ))}
             </div>
-          </section>
-        )}
+          ) : (
+            <p className="text-white/40 text-sm">Contact {detailer.company} for service options and pricing.</p>
+          )}
+        </section>
 
         {/* Certifications */}
         {detailer.certifications && detailer.certifications.length > 0 && (
