@@ -56,6 +56,17 @@ const AIRPORTS: Record<string, [number, number]> = {
   KBZN: [45.7775, -111.1603], KBIL: [45.8077, -108.5429], KFCA: [48.3105, -114.256],
   KCOS: [38.8058, -104.7009], KASE: [39.2232, -106.8688], KEGE: [39.6426, -106.9159],
   KGUC: [38.5339, -106.9332], KTEX: [37.9538, -107.9084], KGJT: [39.1224, -108.5267],
+  // Additional GA airports (directory detailers)
+  KMQJ: [39.8441, -85.9011], // Indianapolis Regional, Greenfield IN
+  KCLL: [30.5886, -96.3638], // Easterwood Field, College Station TX
+  KPWA: [35.5342, -97.6471], // Wiley Post, Oklahoma City
+  KOSH: [43.9844, -88.5570], // Wittman Regional, Oshkosh WI
+  KAGC: [40.3544, -79.9302], // Allegheny County, Pittsburgh
+  KFNL: [40.4518, -105.0113], // Fort Collins-Loveland
+  KGGG: [32.3840, -94.7115], // East Texas Regional
+  KTKI: [33.1781, -96.5905], // McKinney National
+  KDAL: [32.8471, -96.8518], // Dallas Love Field
+  KCRQ: [33.1283, -117.2803], // McClellan-Palomar, Carlsbad
   // International (major)
   CYYZ: [43.6777, -79.6248], CYVR: [49.195, -123.1818], CYMX: [45.6795, -74.0387],
   EGLL: [51.47, -0.4543], EGLF: [51.276, -0.7763], EGGW: [51.8747, -0.3683],
