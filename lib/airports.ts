@@ -65,8 +65,6 @@ const AIRPORTS: Record<string, [number, number]> = {
   KFNL: [40.4518, -105.0113], // Fort Collins-Loveland
   KGGG: [32.3840, -94.7115], // East Texas Regional
   KTKI: [33.1781, -96.5905], // McKinney National
-  KDAL: [32.8471, -96.8518], // Dallas Love Field
-  KCRQ: [33.1283, -117.2803], // McClellan-Palomar, Carlsbad
   // International (major)
   CYYZ: [43.6777, -79.6248], CYVR: [49.195, -123.1818], CYMX: [45.6795, -74.0387],
   EGLL: [51.47, -0.4543], EGLF: [51.276, -0.7763], EGGW: [51.8747, -0.3683],
