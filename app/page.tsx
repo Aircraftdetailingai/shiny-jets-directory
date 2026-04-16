@@ -130,6 +130,21 @@ export default function DirectoryPage() {
             <p className="text-white/20 text-xs">{detailers.length} detailer{detailers.length !== 1 ? 's' : ''} worldwide</p>
           </div>
         )}
+
+        {/* Aircraft Owner CTA — floating bottom right */}
+        {!loading && !selected && (
+          <a
+            href={`${CRM_URL}/portal/login?ref=directory`}
+            className="absolute bottom-4 right-6 z-10 group bg-gradient-to-br from-blue-500/15 to-blue-600/10 hover:from-blue-500/25 hover:to-blue-600/15 backdrop-blur-md border border-blue-400/30 hover:border-blue-400/50 rounded-xl px-5 py-3 text-left transition-all max-w-xs"
+          >
+            <p className="text-white text-sm font-semibold mb-0.5 flex items-center gap-1.5">
+              <span>Track Your Aircraft</span>
+              <span className="text-blue-300 text-xs bg-blue-500/20 px-1.5 py-0.5 rounded">FREE</span>
+            </p>
+            <p className="text-white/60 text-xs leading-relaxed mb-1.5">Log services, download history, share with mechanics</p>
+            <p className="text-blue-300 text-xs group-hover:text-blue-200 transition-colors">Create Free Aircraft Profile &rarr;</p>
+          </a>
+        )}
       </div>
 
       {/* Slide-in Card */}
@@ -265,6 +280,16 @@ export default function DirectoryPage() {
                 >
                   View full profile &rarr;
                 </a>
+
+                {/* Aircraft owner CTA */}
+                <div className="mt-4 pt-4 border-t border-white/5">
+                  <a
+                    href={`${CRM_URL}/portal/login?ref=directory&detailer=${selected.id}`}
+                    className="block text-center text-blue-400/70 hover:text-blue-300 text-xs transition-colors"
+                  >
+                    {'\u2708\uFE0F'} After your service, track it in your free aircraft log &rarr;
+                  </a>
+                </div>
               </div>
             </div>
           </div>
