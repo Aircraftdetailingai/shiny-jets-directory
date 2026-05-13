@@ -7,6 +7,10 @@ import { getAirportInfo } from '@/lib/airport-cities';
 const Globe = dynamic(() => import('@/components/Globe'), { ssr: false });
 
 const CRM_URL = process.env.NEXT_PUBLIC_CRM_URL || 'https://crm.shinyjets.com';
+// Detailer data now comes from this repo's own /api/detailers route so the
+// directory's row count + ranking can't be silently affected by changes in
+// the CRM's directory endpoint. Same DB underneath; the gate is applied here.
+const DIRECTORY_API = '/api/detailers';
 
 interface Detailer {
   id: string;
@@ -36,7 +40,7 @@ export default function DirectoryPage() {
   const [focusAirport, setFocusAirport] = useState<string | null>(null);
 
   useEffect(() => {
-    fetch(`${CRM_URL}/api/detailers/directory`)
+    fetch(DIRECTORY_API)
       .then(r => r.ok ? r.json() : { detailers: [] })
       .then(d => {
         console.log('[directory] detailers fetched:', d?.detailers?.length, d?.detailers?.map((x: any) => ({ company: x.company, airport: x.home_airport })));
@@ -190,8 +194,11 @@ export default function DirectoryPage() {
                   </div>
                 </div>
 
-                {/* Airport + City */}
-                {selected.home_airport && (() => {
+                {/* Service area — falls back to home_airport text when no
+                    locations are configured, and to a contact-us hint when
+                    even home_airport is missing, so detailers without
+                    coord-bearing locations never look broken on the card. */}
+                {selected.home_airport ? (() => {
                   const info = getAirportInfo(selected.home_airport);
                   const cityState = info ? `${info.city}, ${info.state}` : null;
                   return (
@@ -202,7 +209,14 @@ export default function DirectoryPage() {
                       </span>
                     </div>
                   );
-                })()}
+                })() : (
+                  <div className="mb-4">
+                    <p className="text-[10px] uppercase tracking-wider text-white/30 mb-1.5">Service Area</p>
+                    <span className="inline-block px-3 py-1.5 bg-white/5 border border-white/10 rounded-lg text-white/60 text-sm font-medium">
+                      Contact for service area
+                    </span>
+                  </div>
+                )}
 
                 {/* Bio / About */}
                 {selected.directory_description && (
