@@ -38,6 +38,10 @@ export default function DirectoryPage() {
   const [selected, setSelected] = useState<Detailer | null>(null);
   const [search, setSearch] = useState('');
   const [focusAirport, setFocusAirport] = useState<string | null>(null);
+  // CTA card lives in the bottom-left now (away from globe zoom controls
+  // anchored bottom-right). Dismissible per Brett — the close button drops
+  // it for the session so the user can fully see the globe corner.
+  const [showCTA, setShowCTA] = useState(true);
 
   useEffect(() => {
     fetch(DIRECTORY_API)
@@ -79,16 +83,19 @@ export default function DirectoryPage() {
     <div className="h-screen bg-[#0a0e1a] overflow-hidden">
       {/* Solid dark header band — contains logo, headline, search */}
       <div className="absolute top-0 left-0 right-0 z-40 bg-[#0a0e1a] border-b border-white/5" style={{ height: '220px' }}>
-        {/* Logo + List Your Business */}
+        {/* Logo + List Your Business — uses the Shiny Jets brand logo with
+            wordmark baked in. The previous src hit ${CRM_URL}/api/public/logo
+            which redirected to whatever detailer logo was first in Supabase
+            storage (Brett's Vector Aviation V), producing a doubled wordmark
+            since a sibling <span> also rendered "Shiny Jets". Both fixed
+            here: real brand asset + no redundant text. */}
         <div className="flex items-center justify-between px-6 py-3">
-          <a href="https://shinyjets.com" className="flex items-center gap-2.5">
+          <a href="https://shinyjets.com" className="flex items-center">
             <img
-              src={`${CRM_URL}/api/public/logo`}
+              src="/logos/shiny-jets-dark.png"
               alt="Shiny Jets"
               className="h-8 object-contain"
-              onError={(e) => { e.currentTarget.style.display = 'none'; }}
             />
-            <span className="text-white font-semibold text-lg tracking-tight">Shiny Jets</span>
           </a>
           <a href={`${CRM_URL}/signup`} className="px-4 py-2 text-xs font-medium text-white/70 border border-white/10 rounded-lg hover:bg-white/5 transition-colors">
             List Your Business
@@ -128,26 +135,41 @@ export default function DirectoryPage() {
           <Globe detailers={detailers} onPinClick={handlePinClick} focusAirport={focusAirport} />
         )}
 
-        {/* Detailer count */}
+        {/* Detailer count — kept at bottom-left, the pop-up stacks above it */}
         {!loading && (
           <div className="absolute bottom-4 left-6 z-10">
             <p className="text-white/20 text-xs">{detailers.length} detailer{detailers.length !== 1 ? 's' : ''} worldwide</p>
           </div>
         )}
 
-        {/* Aircraft Owner CTA — floating bottom right */}
-        {!loading && !selected && (
-          <a
-            href={`${CRM_URL}/portal/login?ref=directory`}
-            className="absolute bottom-4 right-6 z-10 group bg-gradient-to-br from-blue-500/15 to-blue-600/10 hover:from-blue-500/25 hover:to-blue-600/15 backdrop-blur-md border border-blue-400/30 hover:border-blue-400/50 rounded-xl px-5 py-3 text-left transition-all max-w-xs"
-          >
-            <p className="text-white text-sm font-semibold mb-0.5 flex items-center gap-1.5">
-              <span>Track Your Aircraft</span>
-              <span className="text-blue-300 text-xs bg-blue-500/20 px-1.5 py-0.5 rounded">FREE</span>
-            </p>
-            <p className="text-white/60 text-xs leading-relaxed mb-1.5">Log services, download history, share with mechanics</p>
-            <p className="text-blue-300 text-xs group-hover:text-blue-200 transition-colors">Create Free Aircraft Profile &rarr;</p>
-          </a>
+        {/* Aircraft Owner CTA — now anchored bottom-left, stacked above the
+            count, so the globe's zoom +/- buttons (bottom-right of the canvas
+            in Globe.tsx) stay clickable. Close button drops the card for the
+            session. */}
+        {!loading && !selected && showCTA && (
+          <div className="absolute bottom-14 left-6 z-10 max-w-xs">
+            <div className="relative">
+              <a
+                href={`${CRM_URL}/portal/login?ref=directory`}
+                className="block group bg-gradient-to-br from-blue-500/15 to-blue-600/10 hover:from-blue-500/25 hover:to-blue-600/15 backdrop-blur-md border border-blue-400/30 hover:border-blue-400/50 rounded-xl px-5 py-3 pr-9 text-left transition-all"
+              >
+                <p className="text-white text-sm font-semibold mb-0.5 flex items-center gap-1.5">
+                  <span>Track Your Aircraft</span>
+                  <span className="text-blue-300 text-xs bg-blue-500/20 px-1.5 py-0.5 rounded">FREE</span>
+                </p>
+                <p className="text-white/60 text-xs leading-relaxed mb-1.5">Log services, download history, share with mechanics</p>
+                <p className="text-blue-300 text-xs group-hover:text-blue-200 transition-colors">Create Free Aircraft Profile &rarr;</p>
+              </a>
+              <button
+                type="button"
+                onClick={() => setShowCTA(false)}
+                aria-label="Dismiss"
+                className="absolute top-2 right-2 w-6 h-6 flex items-center justify-center rounded-full text-white/50 hover:text-white hover:bg-white/10 transition-colors text-base leading-none"
+              >
+                &times;
+              </button>
+            </div>
+          </div>
         )}
       </div>
 
