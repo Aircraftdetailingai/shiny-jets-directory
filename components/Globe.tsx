@@ -13,6 +13,20 @@ interface Detailer {
   has_online_booking: boolean;
   logo_url?: string;
   slug?: string;
+  // Server-resolved home_airport coordinates (from /api/detailers). Preferred
+  // over the hardcoded AIRPORTS table, which is now only a fallback.
+  lat?: number | null;
+  lng?: number | null;
+}
+
+// Resolve a detailer's globe coordinates: server-provided lat/lng first, then
+// the hardcoded airport table as a fallback for older/cached API responses.
+function detailerCoords(d: Detailer): [number, number] | null {
+  if (typeof d.lat === 'number' && typeof d.lng === 'number' && Number.isFinite(d.lat) && Number.isFinite(d.lng)) {
+    return [d.lat, d.lng];
+  }
+  const coords = AIRPORTS[(d.home_airport || '').toUpperCase()];
+  return coords || null;
 }
 
 interface Cluster {
@@ -49,7 +63,7 @@ function buildClusters(detailers: Detailer[], cameraZ: number): Cluster[] {
   // Resolve airport coords for each detailer
   const points: { lat: number; lng: number; detailer: Detailer }[] = [];
   for (const d of detailers) {
-    const coords = AIRPORTS[(d.home_airport || '').toUpperCase()];
+    const coords = detailerCoords(d);
     if (!coords) continue;
     points.push({ lat: coords[0], lng: coords[1], detailer: d });
   }
@@ -704,7 +718,11 @@ export default function Globe({ detailers, onPinClick, focusAirport }: GlobeProp
   // Focus on airport when search triggers
   useEffect(() => {
     if (!focusAirport || !sceneRef.current) return;
-    const coords = AIRPORTS[focusAirport.toUpperCase()];
+    const code = focusAirport.toUpperCase();
+    // Prefer server-resolved coords for a detailer at the searched airport;
+    // fall back to the hardcoded table.
+    const match = detailers.find((d) => (d.home_airport || '').toUpperCase() === code);
+    const coords = (match && detailerCoords(match)) || AIRPORTS[code] || null;
     if (!coords) return;
     const [lat, lng] = coords;
     sceneRef.current.autoRotate = false;
@@ -715,7 +733,7 @@ export default function Globe({ detailers, onPinClick, focusAirport }: GlobeProp
     setTimeout(() => {
       if (sceneRef.current) sceneRef.current.autoRotate = true;
     }, 5000);
-  }, [focusAirport]);
+  }, [focusAirport, detailers]);
 
   const handleZoom = useCallback((dir: 'in' | 'out') => {
     if (!sceneRef.current) return;

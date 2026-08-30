@@ -1,9 +1,88 @@
 import { NextResponse } from 'next/server';
 import { getSupabase } from '@/lib/supabase';
+import type { SupabaseClient } from '@supabase/supabase-js';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 export const fetchCache = 'force-no-store';
+
+type AirportRow = {
+  icao: string | null;
+  gps_code: string | null;
+  iata: string | null;
+  local_code: string | null;
+  lat: number | string | null;
+  lng: number | string | null;
+  type: string | null;
+  scheduled_service: boolean | null;
+};
+
+// Resolve free-form home_airport codes to lat/lng against the full `airports`
+// reference table (OurAirports-derived). The globe previously resolved codes
+// against a hardcoded ~170-airport table and silently dropped anyone whose
+// airport wasn't in it. Here we match a code against icao / gps_code / iata /
+// local_code, with a strict priority so a well-known IATA code (STT, SIG, YHM)
+// wins over an unrelated foreign airport that happens to share a local_code.
+async function resolveAirportCoords(
+  supabase: SupabaseClient,
+  rawCodes: string[],
+): Promise<Record<string, { lat: number; lng: number }>> {
+  // Airport codes are alphanumeric (+ occasional hyphen); filter anything else
+  // out before it reaches the PostgREST in-filter.
+  const codes = Array.from(
+    new Set(
+      rawCodes
+        .map((c) => (c || '').trim().toUpperCase())
+        .filter((c) => /^[A-Z0-9-]{2,7}$/.test(c)),
+    ),
+  );
+  if (codes.length === 0) return {};
+
+  const list = codes.join(',');
+  const { data, error } = await supabase
+    .from('airports')
+    .select('icao, gps_code, iata, local_code, lat, lng, type, scheduled_service')
+    .or(`icao.in.(${list}),gps_code.in.(${list}),iata.in.(${list}),local_code.in.(${list})`);
+
+  if (error) {
+    console.error('[directory/api] airport resolve error:', error.message);
+    return {};
+  }
+
+  const wanted = new Set(codes);
+  const typeRank = (t: string | null) =>
+    t === 'large_airport' ? 0 : t === 'medium_airport' ? 1 : t === 'small_airport' ? 2 : 3;
+
+  // For each requested code, keep the best-ranked matching airport.
+  const best: Record<string, { rank: number; sched: boolean; type: number; lat: number; lng: number }> = {};
+  const consider = (code: string, rank: number, a: AirportRow) => {
+    if (!wanted.has(code)) return;
+    const lat = Number(a.lat);
+    const lng = Number(a.lng);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+    const cand = { rank, sched: a.scheduled_service === true, type: typeRank(a.type), lat, lng };
+    const cur = best[code];
+    if (
+      !cur ||
+      cand.rank < cur.rank ||
+      (cand.rank === cur.rank && cand.sched && !cur.sched) ||
+      (cand.rank === cur.rank && cand.sched === cur.sched && cand.type < cur.type)
+    ) {
+      best[code] = cand;
+    }
+  };
+
+  for (const a of (data || []) as AirportRow[]) {
+    if (a.icao) consider(a.icao.toUpperCase(), 1, a);
+    if (a.gps_code) consider(a.gps_code.toUpperCase(), 2, a);
+    if (a.iata) consider(a.iata.toUpperCase(), 3, a);
+    if (a.local_code) consider(a.local_code.toUpperCase(), 4, a);
+  }
+
+  const out: Record<string, { lat: number; lng: number }> = {};
+  for (const [code, v] of Object.entries(best)) out[code] = { lat: v.lat, lng: v.lng };
+  return out;
+}
 
 // Directory data source. Queries the same `detailers` table the CRM reads
 // from, but here so the globe never depends on the CRM API surface being
@@ -97,8 +176,16 @@ export async function GET() {
     }
   }
 
+  // Resolve each detailer's home_airport to lat/lng for the globe, so it no
+  // longer depends on the hardcoded client-side airport table.
+  const homeCoordsByCode = await resolveAirportCoords(
+    supabase,
+    (detailers || []).map((d) => d.home_airport).filter(Boolean) as string[],
+  );
+
   const enriched = (detailers || []).map((d) => {
     const s = statsMap[d.id];
+    const homeCoords = d.home_airport ? homeCoordsByCode[d.home_airport.toUpperCase()] : undefined;
     const vAvg = s && s.vTotal > 0 ? parseFloat((s.vSum / s.vTotal).toFixed(1)) : null;
     const gAvg = s && s.gTotal > 0 ? parseFloat((s.gSum / s.gTotal).toFixed(1)) : null;
     const total = (s?.vTotal || 0) + (s?.gTotal || 0);
@@ -114,6 +201,8 @@ export async function GET() {
       google_avg_rating: gAvg,
       combined_review_count: total,
       combined_avg_rating: combinedAvg,
+      lat: homeCoords?.lat ?? null,
+      lng: homeCoords?.lng ?? null,
       theme_logo_url: undefined,
     };
   });
