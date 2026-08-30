@@ -30,6 +30,8 @@ interface Detailer {
   airports_served?: string[];
   verified_finish?: boolean;
   insurance_verified?: boolean;
+  lat?: number | null;
+  lng?: number | null;
 }
 
 export default function DirectoryPage() {
