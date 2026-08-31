@@ -1,56 +1,77 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import dynamic from 'next/dynamic';
-import { getAirportInfo } from '@/lib/airport-cities';
+import type { GlobeFocus } from '@/components/Globe';
+import { Detailer, detailerSlug, detailerPlace, detailerCoords, distanceMiles } from '@/lib/detailer';
 
 const Globe = dynamic(() => import('@/components/Globe'), { ssr: false });
 
 const CRM_URL = process.env.NEXT_PUBLIC_CRM_URL || 'https://crm.shinyjets.com';
-// Detailer data now comes from this repo's own /api/detailers route so the
-// directory's row count + ranking can't be silently affected by changes in
-// the CRM's directory endpoint. Same DB underneath; the gate is applied here.
 const DIRECTORY_API = '/api/detailers';
 
-interface Detailer {
-  id: string;
-  company: string;
-  name: string;
-  home_airport: string;
-  plan: string;
-  has_online_booking: boolean;
-  logo_url?: string;
-  slug?: string;
-  country?: string;
-  avg_rating?: number;
-  review_count?: number;
-  services?: string[];
-  certifications?: string[];
-  directory_description?: string;
-  airports_served?: string[];
-  verified_finish?: boolean;
-  insurance_verified?: boolean;
-  lat?: number | null;
-  lng?: number | null;
+type SearchInfo = { matches: Detailer[]; message: string | null } | null;
+
+// Match a searched code against a detailer's home_airport, tolerating the
+// K-prefix convention (KHII vs HII, YHM vs KYHM).
+function airportMatches(homeAirport: string, code: string): boolean {
+  const ha = (homeAirport || '').toUpperCase();
+  if (!ha) return false;
+  return ha === code || ha === `K${code}` || (code.startsWith('K') && ha === code.slice(1));
+}
+
+function DetailerRow({ d, onFocus }: { d: Detailer; onFocus?: (d: Detailer) => void }) {
+  const slug = detailerSlug(d);
+  const place = detailerPlace(d);
+  return (
+    <div className="px-3 py-2.5 rounded-lg hover:bg-white/[0.04] transition-colors border border-transparent hover:border-white/10">
+      <button
+        type="button"
+        onClick={() => onFocus?.(d)}
+        className="block w-full text-left"
+        disabled={!onFocus || !detailerCoords(d)}
+      >
+        <p className="text-white text-sm font-medium truncate">{d.company || d.name}</p>
+        <p className="text-white/40 text-xs truncate">
+          {d.home_airport ? d.home_airport : 'No home airport'}
+          {place ? ` · ${place}` : ''}
+        </p>
+      </button>
+      <div className="flex gap-2 mt-2">
+        <a href={`/detailer/${slug}`} className="flex-1 text-center text-[11px] font-medium text-white/80 bg-white/[0.06] border border-white/10 rounded-md py-1.5 hover:bg-white/10 transition-colors">
+          View Profile
+        </a>
+        <a href={`${CRM_URL}/request/${slug}`} target="_blank" rel="noreferrer" className="flex-1 text-center text-[11px] font-medium text-white bg-blue-500 rounded-md py-1.5 hover:bg-blue-600 transition-colors">
+          Request Quote
+        </a>
+      </div>
+    </div>
+  );
 }
 
 export default function DirectoryPage() {
   const [detailers, setDetailers] = useState<Detailer[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [selected, setSelected] = useState<Detailer | null>(null);
+  const [dataLoading, setDataLoading] = useState(true);
+  const [globeReady, setGlobeReady] = useState(false);
   const [search, setSearch] = useState('');
-  const [focusAirport, setFocusAirport] = useState<string | null>(null);
-  // CTA card lives in the bottom-left now (away from globe zoom controls
-  // anchored bottom-right). Dismissible per Brett — the close button drops
-  // it for the session so the user can fully see the globe corner.
+  const [focus, setFocus] = useState<GlobeFocus | null>(null);
+  const [searchInfo, setSearchInfo] = useState<SearchInfo>(null);
+  const [panelOpen, setPanelOpen] = useState(false);
+  const [filter, setFilter] = useState('');
   const [showCTA, setShowCTA] = useState(true);
+
+  // Preload the globe chunk so it's ready as soon as data lands.
+  useEffect(() => {
+    import('@/components/Globe');
+    // Default the All-detailers panel open on mobile (map-only is unusable
+    // there and hides the no-home-airport detailers).
+    if (typeof window !== 'undefined' && window.innerWidth < 768) setPanelOpen(true);
+  }, []);
 
   useEffect(() => {
     fetch(DIRECTORY_API)
-      .then(r => r.ok ? r.json() : { detailers: [] })
-      .then(d => {
-        console.log('[directory] detailers fetched:', d?.detailers?.length, d?.detailers?.map((x: any) => ({ company: x.company, airport: x.home_airport })));
-        // Normalize: convert nulls to undefined so optional types work
+      .then((r) => (r.ok ? r.json() : { detailers: [] }))
+      .then((d) => {
         const normalized: Detailer[] = (d.detailers || d || []).map((x: any) => ({
           ...x,
           logo_url: x.logo_url || undefined,
@@ -60,101 +81,186 @@ export default function DirectoryPage() {
         setDetailers(normalized);
       })
       .catch(() => {})
-      .finally(() => setLoading(false));
+      .finally(() => setDataLoading(false));
   }, []);
 
-  const handleSearch = (e: React.FormEvent) => {
-    e.preventDefault();
-    const q = search.trim().toUpperCase();
-    if (q.length >= 3) {
-      if (/^K?[A-Z]{3,4}$/.test(q)) {
-        setFocusAirport(q.startsWith('K') ? q : `K${q}`);
-      } else {
-        setFocusAirport(q);
+  const onGlobeReady = useCallback(() => setGlobeReady(true), []);
+
+  const handleSearch = useCallback(
+    async (e: React.FormEvent) => {
+      e.preventDefault();
+      const code = search.trim().toUpperCase();
+      if (code.length < 2) return;
+
+      const matches = detailers.filter((d) => airportMatches(d.home_airport, code));
+      if (matches.length > 0) {
+        const withCoords = matches.find((m) => detailerCoords(m));
+        const c = withCoords ? detailerCoords(withCoords) : null;
+        if (c) setFocus({ lat: c[0], lng: c[1], code: (matches[0].home_airport || code).toUpperCase() });
+        setSearchInfo({ matches, message: null });
+        return;
       }
-    }
-  };
 
-  const handlePinClick = (d: Detailer) => {
-    setSelected(d);
-  };
+      // No detailer at this airport — resolve its coords to fly there and name
+      // the nearest detailer.
+      try {
+        const res = await fetch(`/api/resolve-airport?code=${encodeURIComponent(code)}`);
+        if (res.ok) {
+          const ap = await res.json();
+          setFocus({ lat: ap.lat, lng: ap.lng, code });
+          let message = `No detailers at ${code}.`;
+          const withCoords = detailers.filter((d) => detailerCoords(d));
+          if (withCoords.length > 0) {
+            let best: Detailer | null = null;
+            let bestMi = Infinity;
+            for (const d of withCoords) {
+              const dc = detailerCoords(d)!;
+              const mi = distanceMiles(ap.lat, ap.lng, dc[0], dc[1]);
+              if (mi < bestMi) { bestMi = mi; best = d; }
+            }
+            if (best) message = `No detailers at ${code} — nearest: ${best.company || best.name} at ${best.home_airport} (${Math.round(bestMi)} mi)`;
+            setSearchInfo({ matches: best ? [best] : [], message });
+          } else {
+            setSearchInfo({ matches: [], message });
+          }
+        } else {
+          setSearchInfo({ matches: [], message: `Airport "${code}" not found.` });
+        }
+      } catch {
+        setSearchInfo({ matches: [], message: `Couldn't look up "${code}".` });
+      }
+    },
+    [search, detailers],
+  );
 
-  const slug = selected?.slug || selected?.company?.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || selected?.id;
+  const focusDetailer = useCallback((d: Detailer) => {
+    const c = detailerCoords(d);
+    if (c) setFocus({ lat: c[0], lng: c[1], code: (d.home_airport || '').toUpperCase() });
+  }, []);
+
+  const filtered = useMemo(() => {
+    const q = filter.trim().toLowerCase();
+    const list = q
+      ? detailers.filter(
+          (d) =>
+            (d.company || '').toLowerCase().includes(q) ||
+            (d.name || '').toLowerCase().includes(q) ||
+            (d.home_airport || '').toLowerCase().includes(q) ||
+            (detailerPlace(d) || '').toLowerCase().includes(q),
+        )
+      : detailers;
+    return list;
+  }, [detailers, filter]);
+
+  const loading = dataLoading || !globeReady;
 
   return (
     <div className="h-screen bg-[#0a0e1a] overflow-hidden">
-      {/* Solid dark header band — contains logo, headline, search */}
+      {/* Header band */}
       <div className="absolute top-0 left-0 right-0 z-40 bg-[#0a0e1a] border-b border-white/5" style={{ height: '220px' }}>
-        {/* Logo + List Your Business — uses the Shiny Jets brand logo with
-            wordmark baked in. The previous src hit ${CRM_URL}/api/public/logo
-            which redirected to whatever detailer logo was first in Supabase
-            storage (Brett's Vector Aviation V), producing a doubled wordmark
-            since a sibling <span> also rendered "Shiny Jets". Both fixed
-            here: real brand asset + no redundant text. */}
         <div className="flex items-center justify-between px-6 py-3">
           <a href="https://shinyjets.com" className="flex items-center">
-            <img
-              src="/logos/shiny-jets-dark.png"
-              alt="Shiny Jets"
-              className="h-8 object-contain"
-            />
+            <img src="/logos/shiny-jets-dark.png" alt="Shiny Jets" className="h-8 object-contain" />
           </a>
           <a href={`${CRM_URL}/signup`} className="px-4 py-2 text-xs font-medium text-white/70 border border-white/10 rounded-lg hover:bg-white/5 transition-colors">
             List Your Business
           </a>
         </div>
-
-        {/* Headline + search */}
         <div className="text-center px-6 pt-3">
-          <h1 className="text-2xl sm:text-3xl md:text-4xl font-light text-white tracking-tight mb-2">
-            Find an Aircraft Detailer
-          </h1>
-          <p className="text-white/50 text-xs sm:text-sm mb-3 max-w-lg mx-auto">
-            Browse the Shiny Jets network of professional aircraft detailers worldwide
-          </p>
+          <h1 className="text-2xl sm:text-3xl md:text-4xl font-light text-white tracking-tight mb-2">Find an Aircraft Detailer</h1>
+          <p className="text-white/50 text-xs sm:text-sm mb-3 max-w-lg mx-auto">Browse the Shiny Jets network of professional aircraft detailers worldwide</p>
           <form onSubmit={handleSearch} className="max-w-md mx-auto flex gap-2">
             <input
               type="text"
               value={search}
-              onChange={e => setSearch(e.target.value)}
+              onChange={(e) => setSearch(e.target.value)}
               placeholder="Search by airport code (KTEB, KLAS...)"
               className="flex-1 px-4 py-2.5 rounded-lg bg-white/[0.06] border border-white/10 text-white text-sm placeholder-white/30 outline-none focus:border-blue-500/50 transition-colors"
             />
-            <button type="submit" className="px-5 py-2.5 rounded-lg bg-blue-500 text-white text-sm font-medium hover:bg-blue-600 transition-colors">
-              Search
-            </button>
+            <button type="submit" className="px-5 py-2.5 rounded-lg bg-blue-500 text-white text-sm font-medium hover:bg-blue-600 transition-colors">Search</button>
           </form>
         </div>
       </div>
 
-      {/* Globe — completely below the 220px header band */}
+      {/* Globe area */}
       <div className="absolute left-0 right-0 bottom-0" style={{ top: '220px' }}>
-        {loading ? (
-          <div className="absolute inset-0 flex items-center justify-center">
+        {!dataLoading && <Globe detailers={detailers} focus={focus} onReady={onGlobeReady} />}
+
+        {loading && (
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 z-20 bg-[#0a0e1a]/60">
             <div className="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+            <p className="text-white/50 text-sm">Loading detailers…</p>
           </div>
-        ) : (
-          <Globe detailers={detailers} onPinClick={handlePinClick} focusAirport={focusAirport} />
         )}
 
-        {/* Detailer count — kept at bottom-left, the pop-up stacks above it */}
+        {/* Search results panel (beside the globe) */}
+        {searchInfo && (
+          <div className="absolute top-4 left-4 z-30 w-[300px] max-w-[calc(100%-2rem)]">
+            <div className="bg-[#0f1623]/95 backdrop-blur-md border border-white/10 rounded-xl shadow-2xl overflow-hidden">
+              <div className="flex items-center justify-between px-4 py-2.5 border-b border-white/10">
+                <span className="text-white text-xs font-semibold uppercase tracking-wider">
+                  {searchInfo.matches.length > 0 && !searchInfo.message
+                    ? `${searchInfo.matches.length} result${searchInfo.matches.length !== 1 ? 's' : ''}`
+                    : 'Search'}
+                </span>
+                <button onClick={() => setSearchInfo(null)} className="text-white/40 hover:text-white text-lg leading-none" aria-label="Close">&times;</button>
+              </div>
+              {searchInfo.message && (
+                <p className="px-4 py-3 text-white/70 text-xs leading-relaxed">{searchInfo.message}</p>
+              )}
+              <div className="max-h-[46vh] overflow-y-auto p-2">
+                {searchInfo.matches.map((d) => (
+                  <DetailerRow key={d.id} d={d} onFocus={focusDetailer} />
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* All-detailers panel toggle */}
+        {!loading && (
+          <button
+            onClick={() => setPanelOpen((v) => !v)}
+            className="absolute top-4 right-4 z-30 px-3 py-2 rounded-lg bg-[#0f1623]/90 backdrop-blur-md border border-white/10 text-white/80 text-xs font-medium hover:bg-white/10 transition-colors"
+          >
+            {panelOpen ? 'Hide list' : `All detailers (${detailers.length})`}
+          </button>
+        )}
+
+        {/* All-detailers panel */}
+        {panelOpen && (
+          <div className="absolute top-16 right-4 bottom-4 z-30 w-[320px] max-w-[calc(100%-2rem)] flex flex-col bg-[#0f1623]/95 backdrop-blur-md border border-white/10 rounded-xl shadow-2xl overflow-hidden">
+            <div className="p-3 border-b border-white/10">
+              <input
+                type="text"
+                value={filter}
+                onChange={(e) => setFilter(e.target.value)}
+                placeholder="Filter by name or airport"
+                className="w-full px-3 py-2 rounded-lg bg-white/[0.06] border border-white/10 text-white text-xs placeholder-white/30 outline-none focus:border-blue-500/50"
+              />
+            </div>
+            <div className="flex-1 overflow-y-auto p-2">
+              {filtered.length === 0 ? (
+                <p className="text-white/40 text-xs text-center py-6">No matches</p>
+              ) : (
+                filtered.map((d) => <DetailerRow key={d.id} d={d} onFocus={focusDetailer} />)
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Detailer count */}
         {!loading && (
           <div className="absolute bottom-4 left-6 z-10">
             <p className="text-white/20 text-xs">{detailers.length} detailer{detailers.length !== 1 ? 's' : ''} worldwide</p>
           </div>
         )}
 
-        {/* Aircraft Owner CTA — now anchored bottom-left, stacked above the
-            count, so the globe's zoom +/- buttons (bottom-right of the canvas
-            in Globe.tsx) stay clickable. Close button drops the card for the
-            session. */}
-        {!loading && !selected && showCTA && (
+        {/* Aircraft Owner CTA */}
+        {!loading && showCTA && (
           <div className="absolute bottom-14 left-6 z-10 max-w-xs">
             <div className="relative">
-              <a
-                href={`${CRM_URL}/portal/login?ref=directory`}
-                className="block group bg-gradient-to-br from-blue-500/15 to-blue-600/10 hover:from-blue-500/25 hover:to-blue-600/15 backdrop-blur-md border border-blue-400/30 hover:border-blue-400/50 rounded-xl px-5 py-3 pr-9 text-left transition-all"
-              >
+              <a href={`${CRM_URL}/portal/login?ref=directory`} className="block group bg-gradient-to-br from-blue-500/15 to-blue-600/10 hover:from-blue-500/25 hover:to-blue-600/15 backdrop-blur-md border border-blue-400/30 hover:border-blue-400/50 rounded-xl px-5 py-3 pr-9 text-left transition-all">
                 <p className="text-white text-sm font-semibold mb-0.5 flex items-center gap-1.5">
                   <span>Track Your Aircraft</span>
                   <span className="text-blue-300 text-xs bg-blue-500/20 px-1.5 py-0.5 rounded">FREE</span>
@@ -162,177 +268,11 @@ export default function DirectoryPage() {
                 <p className="text-white/60 text-xs leading-relaxed mb-1.5">Log services, download history, share with mechanics</p>
                 <p className="text-blue-300 text-xs group-hover:text-blue-200 transition-colors">Create Free Aircraft Profile &rarr;</p>
               </a>
-              <button
-                type="button"
-                onClick={() => setShowCTA(false)}
-                aria-label="Dismiss"
-                className="absolute top-2 right-2 w-6 h-6 flex items-center justify-center rounded-full text-white/50 hover:text-white hover:bg-white/10 transition-colors text-base leading-none"
-              >
-                &times;
-              </button>
+              <button type="button" onClick={() => setShowCTA(false)} aria-label="Dismiss" className="absolute top-2 right-2 w-6 h-6 flex items-center justify-center rounded-full text-white/50 hover:text-white hover:bg-white/10 transition-colors text-base leading-none">&times;</button>
             </div>
           </div>
         )}
       </div>
-
-      {/* Slide-in Card */}
-      {selected && (
-        <>
-          <div className="fixed inset-0 bg-black/40 z-30 md:bg-transparent" onClick={() => setSelected(null)} />
-          <div className="fixed bottom-0 left-0 right-0 md:bottom-auto md:top-0 md:right-0 md:left-auto md:w-[400px] md:h-full z-40 animate-slide-in" style={{ maxHeight: '85vh' }}>
-            <div className="bg-[#0f1623] border-t md:border-l border-white/10 rounded-t-2xl md:rounded-none h-full md:h-screen flex flex-col overflow-hidden shadow-2xl">
-              {/* Close */}
-              <div className="flex items-center justify-between px-5 pt-5 pb-2">
-                <span className="text-[10px] uppercase tracking-wider text-white/30">Detailer Profile</span>
-                <button onClick={() => setSelected(null)} className="text-white/30 hover:text-white text-lg">&times;</button>
-              </div>
-
-              <div className="flex-1 overflow-y-auto px-5 pb-5">
-                {/* Logo + Name */}
-                <div className="flex items-center gap-4 mb-5">
-                  {selected.logo_url ? (
-                    <img
-                      src={selected.logo_url}
-                      alt={selected.company || ''}
-                      className="w-16 h-16 rounded-xl object-contain bg-white p-1 border border-white/10 flex-shrink-0"
-                      onError={(e) => {
-                        e.currentTarget.style.display = 'none';
-                        const fallback = e.currentTarget.nextElementSibling as HTMLElement | null;
-                        if (fallback) fallback.style.display = 'flex';
-                      }}
-                    />
-                  ) : null}
-                  {!selected.logo_url && (
-                    <div className="w-16 h-16 rounded-xl bg-blue-500/20 flex items-center justify-center text-blue-400 text-2xl font-bold flex-shrink-0">
-                      {selected.company?.charAt(0) || '?'}
-                    </div>
-                  )}
-                  <div className="min-w-0">
-                    <h2 className="text-white text-lg font-semibold truncate">{selected.company || selected.name}</h2>
-                    {selected.avg_rating ? (
-                      <div className="flex items-center gap-1 mt-0.5">
-                        <span className="text-yellow-400 text-xs">{'★'.repeat(Math.round(selected.avg_rating))}</span>
-                        <span className="text-white/40 text-xs">{selected.avg_rating.toFixed(1)} ({selected.review_count})</span>
-                      </div>
-                    ) : null}
-                  </div>
-                </div>
-
-                {/* Service area — falls back to home_airport text when no
-                    locations are configured, and to a contact-us hint when
-                    even home_airport is missing, so detailers without
-                    coord-bearing locations never look broken on the card. */}
-                {selected.home_airport ? (() => {
-                  const info = getAirportInfo(selected.home_airport);
-                  const cityState = info ? `${info.city}, ${info.state}` : null;
-                  return (
-                    <div className="mb-4">
-                      <p className="text-[10px] uppercase tracking-wider text-white/30 mb-1.5">Home Airport</p>
-                      <span className="inline-block px-3 py-1.5 bg-blue-500/10 border border-blue-500/20 rounded-lg text-blue-400 text-sm font-medium">
-                        {selected.home_airport}{cityState ? ` · ${cityState}` : ''}
-                      </span>
-                    </div>
-                  );
-                })() : (
-                  <div className="mb-4">
-                    <p className="text-[10px] uppercase tracking-wider text-white/30 mb-1.5">Service Area</p>
-                    <span className="inline-block px-3 py-1.5 bg-white/5 border border-white/10 rounded-lg text-white/60 text-sm font-medium">
-                      Contact for service area
-                    </span>
-                  </div>
-                )}
-
-                {/* Bio / About */}
-                {selected.directory_description && (
-                  <p className="text-white/60 text-xs leading-relaxed mb-4 line-clamp-2">
-                    {selected.directory_description}
-                  </p>
-                )}
-
-                {/* Badges */}
-                <div className="flex flex-wrap gap-2 mb-5">
-                  {selected.has_online_booking && (
-                    <span className="px-3 py-1 bg-green-500/10 border border-green-500/20 rounded-full text-green-400 text-xs font-medium">
-                      ● Online Booking
-                    </span>
-                  )}
-                  {selected.insurance_verified && (
-                    <span className="px-3 py-1 bg-blue-500/10 border border-blue-500/20 rounded-full text-blue-400 text-xs font-medium">
-                      Insured
-                    </span>
-                  )}
-                  {selected.verified_finish && (
-                    <span className="px-3 py-1 bg-amber-500/10 border border-amber-500/20 rounded-full text-amber-400 text-xs font-medium">
-                      Verified Finish
-                    </span>
-                  )}
-                </div>
-
-                {/* Services */}
-                {selected.services && selected.services.length > 0 && (
-                  <div className="mb-5">
-                    <p className="text-[10px] uppercase tracking-wider text-white/30 mb-2">Services</p>
-                    <div className="flex flex-wrap gap-1.5">
-                      {selected.services.slice(0, 5).map((svc, i) => (
-                        <span key={i} className="px-2.5 py-1 bg-white/[0.06] border border-white/10 rounded-full text-white/70 text-[11px]">
-                          {svc}
-                        </span>
-                      ))}
-                      {selected.services.length > 5 && (
-                        <span className="px-2.5 py-1 text-white/40 text-[11px]">
-                          +{selected.services.length - 5} more
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                )}
-
-                {/* Certifications */}
-                {selected.certifications && selected.certifications.length > 0 && (
-                  <div className="mb-5">
-                    <p className="text-[10px] uppercase tracking-wider text-white/30 mb-1.5">Certifications</p>
-                    <ul className="text-white/60 text-xs space-y-1">
-                      {selected.certifications.map((cert, i) => (
-                        <li key={i} className="flex items-start gap-1.5">
-                          <span className="text-white/30 mt-0.5">•</span>
-                          <span>{cert}</span>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-
-                {/* CTA */}
-                <a
-                  href={`${CRM_URL}/request/${slug}`}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="block w-full py-3.5 bg-blue-500 hover:bg-blue-600 text-white text-center text-sm font-semibold rounded-lg transition-colors"
-                >
-                  Request a Quote
-                </a>
-
-                <a
-                  href={`https://directory.shinyjets.com/detailer/${slug}`}
-                  className="block text-center text-white/40 text-xs mt-3 hover:text-white/60 transition-colors"
-                >
-                  View full profile &rarr;
-                </a>
-
-                {/* Aircraft owner CTA */}
-                <div className="mt-4 pt-4 border-t border-white/5">
-                  <a
-                    href={`${CRM_URL}/portal/login?ref=directory&detailer=${selected.id}`}
-                    className="block text-center text-blue-400/70 hover:text-blue-300 text-xs transition-colors"
-                  >
-                    {'\u2708\uFE0F'} After your service, track it in your free aircraft log &rarr;
-                  </a>
-                </div>
-              </div>
-            </div>
-          </div>
-        </>
-      )}
 
       {/* Footer */}
       <footer className="relative z-10 text-center py-3 border-t border-white/5 flex-shrink-0">
@@ -341,22 +281,6 @@ export default function DirectoryPage() {
           {' '}&middot; The Professional Aircraft Detailing Platform
         </p>
       </footer>
-
-      <style jsx global>{`
-        @keyframes slide-in {
-          from { transform: translateY(100%); }
-          to { transform: translateY(0); }
-        }
-        @media (min-width: 768px) {
-          @keyframes slide-in {
-            from { transform: translateX(100%); }
-            to { transform: translateX(0); }
-          }
-        }
-        .animate-slide-in {
-          animation: slide-in 0.3s ease-out;
-        }
-      `}</style>
     </div>
   );
 }

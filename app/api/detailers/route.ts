@@ -2,9 +2,10 @@ import { NextResponse } from 'next/server';
 import { getSupabase } from '@/lib/supabase';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
+// Dynamic (reads Supabase per origin request) but the response carries an
+// explicit s-maxage so Vercel's CDN serves repeat loads warm. No force-no-store
+// / revalidate:0 here — those would suppress the edge cache we want.
 export const dynamic = 'force-dynamic';
-export const revalidate = 0;
-export const fetchCache = 'force-no-store';
 
 type AirportRow = {
   icao: string | null;
@@ -15,7 +16,18 @@ type AirportRow = {
   lng: number | string | null;
   type: string | null;
   scheduled_service: boolean | null;
+  city: string | null;
+  iso_region: string | null;
 };
+
+type ResolvedAirport = { lat: number; lng: number; city: string | null; region: string | null };
+
+// iso_region is like "US-CA" / "CA-ON"; the trailing segment is the state/province.
+function regionFromIso(iso: string | null): string | null {
+  if (!iso) return null;
+  const parts = iso.split('-');
+  return parts.length > 1 ? parts[parts.length - 1] : iso;
+}
 
 // Resolve free-form home_airport codes to lat/lng against the full `airports`
 // reference table (OurAirports-derived). The globe previously resolved codes
@@ -26,7 +38,7 @@ type AirportRow = {
 async function resolveAirportCoords(
   supabase: SupabaseClient,
   rawCodes: string[],
-): Promise<Record<string, { lat: number; lng: number }>> {
+): Promise<Record<string, ResolvedAirport>> {
   // Airport codes are alphanumeric (+ occasional hyphen); filter anything else
   // out before it reaches the PostgREST in-filter.
   const codes = Array.from(
@@ -41,7 +53,7 @@ async function resolveAirportCoords(
   const list = codes.join(',');
   const { data, error } = await supabase
     .from('airports')
-    .select('icao, gps_code, iata, local_code, lat, lng, type, scheduled_service')
+    .select('icao, gps_code, iata, local_code, lat, lng, type, scheduled_service, city, iso_region')
     .or(`icao.in.(${list}),gps_code.in.(${list}),iata.in.(${list}),local_code.in.(${list})`);
 
   if (error) {
@@ -54,13 +66,21 @@ async function resolveAirportCoords(
     t === 'large_airport' ? 0 : t === 'medium_airport' ? 1 : t === 'small_airport' ? 2 : 3;
 
   // For each requested code, keep the best-ranked matching airport.
-  const best: Record<string, { rank: number; sched: boolean; type: number; lat: number; lng: number }> = {};
+  const best: Record<string, { rank: number; sched: boolean; type: number } & ResolvedAirport> = {};
   const consider = (code: string, rank: number, a: AirportRow) => {
     if (!wanted.has(code)) return;
     const lat = Number(a.lat);
     const lng = Number(a.lng);
     if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
-    const cand = { rank, sched: a.scheduled_service === true, type: typeRank(a.type), lat, lng };
+    const cand = {
+      rank,
+      sched: a.scheduled_service === true,
+      type: typeRank(a.type),
+      lat,
+      lng,
+      city: a.city || null,
+      region: regionFromIso(a.iso_region),
+    };
     const cur = best[code];
     if (
       !cur ||
@@ -79,8 +99,8 @@ async function resolveAirportCoords(
     if (a.local_code) consider(a.local_code.toUpperCase(), 4, a);
   }
 
-  const out: Record<string, { lat: number; lng: number }> = {};
-  for (const [code, v] of Object.entries(best)) out[code] = { lat: v.lat, lng: v.lng };
+  const out: Record<string, ResolvedAirport> = {};
+  for (const [code, v] of Object.entries(best)) out[code] = { lat: v.lat, lng: v.lng, city: v.city, region: v.region };
   return out;
 }
 
@@ -203,6 +223,8 @@ export async function GET() {
       combined_avg_rating: combinedAvg,
       lat: homeCoords?.lat ?? null,
       lng: homeCoords?.lng ?? null,
+      city: homeCoords?.city ?? null,
+      region: homeCoords?.region ?? null,
       theme_logo_url: undefined,
     };
   });
@@ -232,7 +254,9 @@ export async function GET() {
     { detailers: enriched },
     {
       headers: {
-        'Cache-Control': 'no-store, max-age=0',
+        // Directory data changes rarely; let Vercel's CDN serve it warm and
+        // revalidate in the background so repeat loads are fast (<200ms).
+        'Cache-Control': 'public, s-maxage=300, stale-while-revalidate=3600',
         'Access-Control-Allow-Origin': '*',
       },
     },
