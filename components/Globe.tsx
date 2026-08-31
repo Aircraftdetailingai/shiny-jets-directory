@@ -424,29 +424,32 @@ export default function Globe({ detailers, focus, onReady }: GlobeProps) {
         return withPlace ? (detailerPlace(withPlace) as string) : `${cluster.detailers.length} detailers`;
       };
 
-      // Test hook (harmless in prod): expose live pin screen positions so a
-      // browser test can hover/click exact pins inside the WebGL canvas.
-      (window as any).__globe = {
-        getPins: () =>
-          pins.map((p) => {
-            p.group.getWorldPosition(tmpV);
-            globe.getWorldPosition(tmpCenter);
-            camera.getWorldPosition(tmpCam);
-            const facing = tmpCam.clone().sub(tmpV).dot(tmpV.clone().sub(tmpCenter)) > 0;
-            const proj = tmpV.clone().project(camera);
-            const rect = el.getBoundingClientRect();
-            return {
-              count: p.cluster.detailers.length,
-              company: p.cluster.detailers[0]?.company || '',
-              codes: p.cluster.detailers.map((d) => d.home_airport),
-              front: facing && proj.z <= 1,
-              x: rect.left + (proj.x * 0.5 + 0.5) * rect.width,
-              y: rect.top + (-proj.y * 0.5 + 0.5) * rect.height,
-            };
-          }),
-        stopRotate: () => { if (sceneRef.current) sceneRef.current.autoRotate = false; },
-        cameraZ: () => camera.position.z,
-      };
+      // Dev-only test hook: expose live pin screen positions so a browser test
+      // can hover/click exact pins inside the WebGL canvas. Dead-code-eliminated
+      // from production bundles (NODE_ENV is inlined at build time).
+      if (process.env.NODE_ENV !== 'production') {
+        (window as any).__globe = {
+          getPins: () =>
+            pins.map((p) => {
+              p.group.getWorldPosition(tmpV);
+              globe.getWorldPosition(tmpCenter);
+              camera.getWorldPosition(tmpCam);
+              const facing = tmpCam.clone().sub(tmpV).dot(tmpV.clone().sub(tmpCenter)) > 0;
+              const proj = tmpV.clone().project(camera);
+              const rect = el.getBoundingClientRect();
+              return {
+                count: p.cluster.detailers.length,
+                company: p.cluster.detailers[0]?.company || '',
+                codes: p.cluster.detailers.map((d) => d.home_airport),
+                front: facing && proj.z <= 1,
+                x: rect.left + (proj.x * 0.5 + 0.5) * rect.width,
+                y: rect.top + (-proj.y * 0.5 + 0.5) * rect.height,
+              };
+            }),
+          stopRotate: () => { if (sceneRef.current) sceneRef.current.autoRotate = false; },
+          cameraZ: () => camera.position.z,
+        };
+      }
 
       const openCardForPin = (p: PinEntry, sticky: boolean) => {
         activeGroupRef.current = p.group;
