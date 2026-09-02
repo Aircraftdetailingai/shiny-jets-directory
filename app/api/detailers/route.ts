@@ -253,10 +253,9 @@ export async function GET() {
   return NextResponse.json(
     { detailers: enriched },
     {
+      // Cache-Control is set at the routing layer (next.config.mjs headers) so
+      // it lands on the response verbatim; setting it here alone didn't stick.
       headers: {
-        // Directory data changes rarely; let Vercel's CDN serve it warm and
-        // revalidate in the background so repeat loads are fast (<200ms).
-        'Cache-Control': 'public, s-maxage=300, stale-while-revalidate=3600',
         'Access-Control-Allow-Origin': '*',
       },
     },

@@ -2,7 +2,7 @@
 
 import { useRef, useEffect, useCallback, useState, type CSSProperties } from 'react';
 import AIRPORTS from '@/lib/airports';
-import { feature } from 'topojson-client';
+import { feature, mesh } from 'topojson-client';
 import { Detailer, detailerSlug, detailerPlace, detailerCoords as coordsFromDetailer, distanceMiles } from '@/lib/detailer';
 
 const CRM_URL = process.env.NEXT_PUBLIC_CRM_URL || 'https://crm.shinyjets.com';
@@ -85,6 +85,7 @@ interface GlobeProps {
 
 // Cached GeoJSON features so we only fetch once
 let cachedFeatures: any[] | null = null;
+let cachedStates: { mesh: any; features: any[] } | null = null;
 
 async function loadCountries(): Promise<any[]> {
   if (cachedFeatures) return cachedFeatures;
@@ -100,6 +101,130 @@ async function loadCountries(): Promise<any[]> {
     console.error('[Globe] Failed to load countries topology:', e);
     return [];
   }
+}
+
+// US state/territory boundaries (us-atlas states-10m, geographic lng/lat).
+// `mesh` gives just the interior + coastline boundary lines (no double-drawn
+// shared edges); `features` carry state names for labels. Canada isn't in this
+// file, so provinces are out of scope here.
+async function loadStates(): Promise<{ mesh: any; features: any[] }> {
+  if (cachedStates) return cachedStates;
+  try {
+    const res = await fetch('/states-10m.json');
+    if (!res.ok) return { mesh: null, features: [] };
+    const topology = await res.json();
+    const obj = topology.objects.states;
+    const boundary: any = mesh(topology, obj, (a: any, b: any) => a !== b);
+    const fc: any = feature(topology, obj);
+    cachedStates = { mesh: boundary, features: fc.features || [] };
+    return cachedStates;
+  } catch (e) {
+    console.error('[Globe] Failed to load states topology:', e);
+    return { mesh: null, features: [] };
+  }
+}
+
+// Planar centroid of a feature's largest ring — good enough for label anchoring
+// at this scale (no d3-geo dependency).
+function featureCentroid(f: any): [number, number] {
+  const geom = f.geometry;
+  if (!geom) return [0, 0];
+  const polys = geom.type === 'MultiPolygon' ? geom.coordinates : geom.type === 'Polygon' ? [geom.coordinates] : [];
+  let best: number[][] | null = null;
+  for (const poly of polys) {
+    const ring = poly[0];
+    if (ring && (!best || ring.length > best.length)) best = ring;
+  }
+  if (!best) return [0, 0];
+  let sx = 0;
+  let sy = 0;
+  for (const [lng, lat] of best) { sx += lng; sy += lat; }
+  return [sx / best.length, sy / best.length];
+}
+
+// Rough size (max of lng/lat bbox span) to drop tiny countries from far-zoom labels.
+function featureSpan(f: any): number {
+  const geom = f.geometry;
+  if (!geom) return 0;
+  const polys = geom.type === 'MultiPolygon' ? geom.coordinates : geom.type === 'Polygon' ? [geom.coordinates] : [];
+  let minX = 180, minY = 90, maxX = -180, maxY = -90;
+  for (const poly of polys) for (const [lng, lat] of poly[0] || []) {
+    if (lng < minX) minX = lng; if (lng > maxX) maxX = lng;
+    if (lat < minY) minY = lat; if (lat > maxY) maxY = lat;
+  }
+  return Math.max(maxX - minX, maxY - minY);
+}
+
+interface LabelSpec { text: string; upper: boolean; lat: number; lng: number; type: 'country' | 'state'; }
+
+// Build the label list: sizable countries (uppercase) + all US states (title case).
+function collectLabels(countryFeatures: any[], stateFeatures: any[]): LabelSpec[] {
+  const specs: LabelSpec[] = [];
+  for (const f of countryFeatures) {
+    const name = f.properties?.name;
+    if (!name) continue;
+    if (featureSpan(f) < 6) continue; // skip tiny island nations
+    const [lng, lat] = featureCentroid(f);
+    specs.push({ text: name, upper: true, lat, lng, type: 'country' });
+  }
+  for (const f of stateFeatures) {
+    const name = f.properties?.name;
+    if (!name) continue;
+    const [lng, lat] = featureCentroid(f);
+    specs.push({ text: name, upper: false, lat, lng, type: 'state' });
+  }
+  return specs;
+}
+
+// Pack every label string into one canvas texture atlas — drawn ONCE. Returns
+// the canvas plus the pixel cell rect for each spec (same order).
+function buildLabelAtlas(specs: LabelSpec[]): { canvas: HTMLCanvasElement; cells: { x: number; y: number; w: number; h: number }[] } {
+  const fontPx = 64; // high-res so upscaled billboards stay crisp
+  const padX = 16;
+  const cellH = fontPx + 26;
+  const maxW = 2048;
+  const meas = document.createElement('canvas').getContext('2d')!;
+  const fontFor = (upper: boolean) => `${upper ? 700 : 600} ${fontPx}px -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif`;
+
+  const drawn = specs.map((s) => ({ text: s.upper ? s.text.toUpperCase() : s.text, upper: s.upper }));
+  const widths = drawn.map((d) => {
+    meas.font = fontFor(d.upper);
+    (meas as any).letterSpacing = d.upper ? '4px' : '0px';
+    return Math.ceil(meas.measureText(d.text).width) + padX * 2;
+  });
+
+  const cells: { x: number; y: number; w: number; h: number }[] = [];
+  let x = 0;
+  let y = 0;
+  for (const w of widths) {
+    const cw = Math.min(w, maxW);
+    if (x + cw > maxW) { x = 0; y += cellH; }
+    cells.push({ x, y, w: cw, h: cellH });
+    x += cw;
+  }
+  const height = y + cellH;
+
+  const canvas = document.createElement('canvas');
+  canvas.width = maxW;
+  canvas.height = height;
+  const ctx = canvas.getContext('2d')!;
+  ctx.textBaseline = 'middle';
+  ctx.textAlign = 'left';
+  ctx.lineJoin = 'round';
+  for (let i = 0; i < drawn.length; i++) {
+    const c = cells[i];
+    ctx.font = fontFor(drawn[i].upper);
+    (ctx as any).letterSpacing = drawn[i].upper ? '4px' : '0px';
+    const tx = c.x + padX;
+    const ty = c.y + c.h / 2;
+    // Dark halo so labels read over both ocean and land.
+    ctx.strokeStyle = 'rgba(3, 8, 18, 0.92)';
+    ctx.lineWidth = 6;
+    ctx.strokeText(drawn[i].text, tx, ty);
+    ctx.fillStyle = '#eaf1ff';
+    ctx.fillText(drawn[i].text, tx, ty);
+  }
+  return { canvas, cells };
 }
 
 function lngLatToXY(lng: number, lat: number, w: number, h: number): [number, number] {
@@ -120,7 +245,7 @@ function drawRing(ctx: CanvasRenderingContext2D, ring: number[][], w: number, h:
   ctx.closePath();
 }
 
-function drawGlobeTexture(features: any[]): HTMLCanvasElement {
+function drawGlobeTexture(features: any[], statesMesh: any): HTMLCanvasElement {
   const w = 2048;
   const h = 1024;
   const canvas = document.createElement('canvas');
@@ -152,6 +277,24 @@ function drawGlobeTexture(features: any[]): HTMLCanvasElement {
           ctx.stroke();
         }
       }
+    }
+  }
+
+  // State/province boundaries — same hue as country borders but thinner and
+  // dimmer so they read as a secondary layer. Stroke only (no fill).
+  if (statesMesh && statesMesh.coordinates) {
+    ctx.strokeStyle = 'rgba(100, 180, 255, 0.09)';
+    ctx.lineWidth = 0.8;
+    const lines = statesMesh.type === 'MultiLineString' ? statesMesh.coordinates : [statesMesh.coordinates];
+    for (const line of lines) {
+      ctx.beginPath();
+      for (let i = 0; i < line.length; i++) {
+        const [lng, lat] = line[i];
+        const [x, y] = lngLatToXY(lng, lat, w, h);
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      }
+      ctx.stroke();
     }
   }
 
@@ -245,7 +388,10 @@ export default function Globe({ detailers, focus, onReady }: GlobeProps) {
       el.appendChild(renderer.domElement);
 
       const scene = new THREE.Scene();
-      const camera = new THREE.PerspectiveCamera(45, w / h, 0.1, 1000);
+      // Tight far plane (was 1000): the scene spans radius ~1.1, so a small far
+      // plane gives the depth buffer enough precision to keep labels (just above
+      // the surface) from z-fighting with the globe while pins still occlude them.
+      const camera = new THREE.PerspectiveCamera(45, w / h, 0.1, 10);
       const isMobile = () => typeof window !== 'undefined' && window.innerWidth < 768;
       const cameraZForViewport = () => (isMobile() ? 4.5 : 3.5);
       camera.position.z = cameraZForViewport();
@@ -262,9 +408,9 @@ export default function Globe({ detailers, focus, onReady }: GlobeProps) {
       pointLight.position.set(0, 0, 10);
       scene.add(pointLight);
 
-      const features = await loadCountries();
+      const [features, states] = await Promise.all([loadCountries(), loadStates()]);
       if (disposed) return;
-      const canvasTex = drawGlobeTexture(features);
+      const canvasTex = drawGlobeTexture(features, states.mesh);
       const canvasTexture = new THREE.CanvasTexture(canvasTex);
       canvasTexture.colorSpace = THREE.SRGBColorSpace;
       canvasTexture.needsUpdate = true;
@@ -281,6 +427,66 @@ export default function Globe({ detailers, focus, onReady }: GlobeProps) {
       const rimGeom = new THREE.SphereGeometry(globeRadius * 1.08, 64, 64);
       const rimMat = new THREE.MeshBasicMaterial({ color: 0x0099dd, transparent: true, opacity: 0.06, side: THREE.BackSide });
       scene.add(new THREE.Mesh(rimGeom, rimMat));
+
+      // ─── Geographic labels — one texture atlas, billboarded, zoom-aware ───
+      type LabelEntry = { mesh: any; type: 'country' | 'state' };
+      const labelGroup = new THREE.Group();
+      globe.add(labelGroup);
+      const labelEntries: LabelEntry[] = [];
+      {
+        const specs = collectLabels(features, states.features);
+        if (specs.length > 0) {
+          const { canvas: atlasCanvas, cells } = buildLabelAtlas(specs);
+          const atlasTex = new THREE.CanvasTexture(atlasCanvas);
+          atlasTex.colorSpace = THREE.SRGBColorSpace;
+          // Mipmaps are essential: the atlas text is authored at 64px but the
+          // billboards display it at ~13–19px (heavy minification). Without
+          // mipmapping, bilinear sampling falls between the thin glyph strokes
+          // and the labels alias away to near-invisibility. The per-cell gutter
+          // (padX / vertical padding) keeps mip levels from bleeding adjacent
+          // labels together at the sizes we render. WebGL2 mipmaps NPOT fine.
+          atlasTex.generateMipmaps = true;
+          atlasTex.minFilter = THREE.LinearMipmapLinearFilter;
+          atlasTex.magFilter = THREE.LinearFilter;
+          atlasTex.anisotropy = Math.min(4, renderer.capabilities.getMaxAnisotropy());
+          atlasTex.needsUpdate = true;
+          const aw = atlasCanvas.width;
+          const ah = atlasCanvas.height;
+          for (let i = 0; i < specs.length; i++) {
+            const spec = specs[i];
+            const c = cells[i];
+            const worldH = spec.type === 'country' ? 0.06 : 0.05;
+            const worldW = worldH * (c.w / c.h);
+            const geom = new THREE.PlaneGeometry(worldW, worldH);
+            const u0 = c.x / aw;
+            const u1 = (c.x + c.w) / aw;
+            const v1 = 1 - c.y / ah;
+            const v0 = 1 - (c.y + c.h) / ah;
+            const uv = geom.attributes.uv;
+            uv.setXY(0, u0, v1); uv.setXY(1, u1, v1); uv.setXY(2, u0, v0); uv.setXY(3, u1, v0);
+            uv.needsUpdate = true;
+            // Transparent + depthWrite off, depthTest on. Labels sit at radius
+            // 1.02 — high enough above the globe surface (1.0) that the curved
+            // front face doesn't clip the flat billboard near the limb, while
+            // the globe's depth still occludes any label that leaks past the
+            // facing cull onto the back hemisphere. Low opacity keeps the bright
+            // opaque pins visually dominant where the two overlap. DoubleSide so
+            // the billboard never backface-culls; frustumCulled is off because
+            // the billboarded plane's bounding sphere would otherwise mislead
+            // Three's frustum test — visibility is hand-managed in the loop.
+            const mat = new THREE.MeshBasicMaterial({
+              map: atlasTex, transparent: true, depthWrite: false, opacity: 0, side: THREE.DoubleSide,
+            });
+            const m = new THREE.Mesh(geom, mat);
+            m.position.copy(latLngToVector3(spec.lat, spec.lng, globeRadius * 1.02));
+            m.frustumCulled = false;
+            m.renderOrder = -1;
+            m.visible = false;
+            labelGroup.add(m);
+            labelEntries.push({ mesh: m, type: spec.type });
+          }
+        }
+      }
 
       type PinEntry = { sphere: any; hit: any; group: any; cluster: Cluster };
       const pinsContainer = new THREE.Group();
@@ -375,6 +581,7 @@ export default function Globe({ detailers, focus, onReady }: GlobeProps) {
         lastInteraction: Date.now(),
         hoveredGroup: null as any,
         pendingFocus: null as null | GlobeFocus,
+        labels: labelEntries,
       };
 
       const raycaster = new THREE.Raycaster();
@@ -382,6 +589,7 @@ export default function Globe({ detailers, focus, onReady }: GlobeProps) {
       const tmpV = new THREE.Vector3();
       const tmpCenter = new THREE.Vector3();
       const tmpCam = new THREE.Vector3();
+      const labelQuat = new THREE.Quaternion();
 
       const markInteraction = () => {
         if (sceneRef.current) {
@@ -448,6 +656,20 @@ export default function Globe({ detailers, focus, onReady }: GlobeProps) {
             }),
           stopRotate: () => { if (sceneRef.current) sceneRef.current.autoRotate = false; },
           cameraZ: () => camera.position.z,
+          getLabels: () =>
+            labelEntries
+              .filter((L) => L.mesh.visible && L.mesh.material.opacity > 0.03)
+              .map((L) => {
+                L.mesh.getWorldPosition(tmpV);
+                const proj = tmpV.clone().project(camera);
+                const rect = el.getBoundingClientRect();
+                return {
+                  type: L.type,
+                  opacity: Number(L.mesh.material.opacity.toFixed(3)),
+                  x: rect.left + (proj.x * 0.5 + 0.5) * rect.width,
+                  y: rect.top + (-proj.y * 0.5 + 0.5) * rect.height,
+                };
+              }),
         };
       }
 
@@ -720,6 +942,40 @@ export default function Globe({ detailers, focus, onReady }: GlobeProps) {
 
         const scaleFactor = camera.position.z / 3.5;
         for (const p of s.pins) p.group.scale.setScalar(scaleFactor);
+
+        // ─── Labels: billboard + zoom-aware fade + backface cull ───
+        if (s.labels && s.labels.length) {
+          const z = camera.position.z;
+          // Country names at far zoom; US state names once zoomed in. Smooth
+          // easing toward the target opacity gives the fade in/out.
+          const countryTarget = 0.5 * Math.max(0, Math.min(1, (z - 2.6) / 1.0));
+          const stateTarget = 0.72 * Math.max(0, Math.min(1, (2.3 - z) / 0.5));
+          // Billboard: labels are children of the globe, so cancel the globe's
+          // rotation to keep them facing the (fixed, +Z) camera.
+          labelQuat.copy(globe.quaternion).invert();
+          globe.getWorldPosition(tmpCenter);
+          camera.getWorldPosition(tmpCam);
+          for (const L of s.labels) {
+            const target = L.type === 'country' ? countryTarget : stateTarget;
+            const mat = L.mesh.material;
+            if (target <= 0.02) {
+              if (L.mesh.visible) { L.mesh.visible = false; mat.opacity = 0; }
+              continue;
+            }
+            L.mesh.getWorldPosition(tmpV);
+            // front-facing test (center is origin): z*posZ > radius²
+            const facing = (tmpCam.x - tmpV.x) * (tmpV.x - tmpCenter.x)
+              + (tmpCam.y - tmpV.y) * (tmpV.y - tmpCenter.y)
+              + (tmpCam.z - tmpV.z) * (tmpV.z - tmpCenter.z) > 0;
+            if (!facing) { if (L.mesh.visible) { L.mesh.visible = false; mat.opacity = 0; } continue; }
+            L.mesh.visible = true;
+            L.mesh.quaternion.copy(labelQuat);
+            // Constant on-screen size (like pins) so labels stay crisp and never
+            // balloon when zoomed in.
+            L.mesh.scale.setScalar(scaleFactor);
+            mat.opacity += (target - mat.opacity) * 0.2;
+          }
+        }
 
         if (Math.abs(camera.position.z - s.lastClusterZ) > 0.2) {
           s.lastClusterZ = camera.position.z;
