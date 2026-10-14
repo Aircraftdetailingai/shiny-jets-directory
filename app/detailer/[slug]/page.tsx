@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
 import { getAirportInfo } from '@/lib/airport-cities';
+import { buildDetailerJsonLd } from '@/lib/directory/jsonld';
 
 const CRM_URL = process.env.NEXT_PUBLIC_CRM_URL || 'https://crm.shinyjets.com';
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://directory.shinyjets.com';
@@ -92,34 +93,18 @@ export default async function DetailerProfilePage({ params }: { params: Promise<
   const profileUrl = `${SITE_URL}/detailer/${slug}`;
   const requestUrl = `${CRM_URL}/request/${slug}`;
 
-  const jsonLd = {
-    '@context': 'https://schema.org',
-    '@type': 'LocalBusiness',
-    '@id': profileUrl,
-    name: detailer.company,
-    description: detailer.description || `${detailer.company} — professional aircraft detailing services${airport ? ` at ${airport.name}, ${airport.city}, ${airport.state}` : ''}.`,
-    url: profileUrl,
-    image: detailer.logo_url || undefined,
-    telephone: detailer.phone || undefined,
-    address: airport ? {
-      '@type': 'PostalAddress',
-      addressLocality: airport.city,
-      addressRegion: airport.state,
-      addressCountry: detailer.country || 'US',
-    } : undefined,
-    areaServed: airport ? `${airport.city}, ${airport.state}` : undefined,
-    serviceType: 'Aircraft Detailing',
-    priceRange: '$$$',
-    aggregateRating: detailer.avg_rating && detailer.review_count ? {
-      '@type': 'AggregateRating',
-      ratingValue: detailer.avg_rating,
-      reviewCount: detailer.review_count,
-    } : undefined,
-    makesOffer: (detailer.services || []).slice(0, 8).map(s => ({
-      '@type': 'Offer',
-      itemOffered: { '@type': 'Service', name: s.name },
-    })),
-  };
+  const jsonLd = buildDetailerJsonLd({
+    company: detailer.company,
+    description: detailer.description,
+    logo_url: detailer.logo_url,
+    phone: detailer.phone,
+    country: detailer.country,
+    avg_rating: detailer.avg_rating,
+    review_count: detailer.review_count,
+    services: detailer.services,
+    profileUrl,
+    airport,
+  });
 
   const themeColor = detailer.theme_primary || '#0081b8';
 
@@ -236,7 +221,7 @@ export default async function DetailerProfilePage({ params }: { params: Promise<
               ))}
             </div>
           ) : (
-            <p className="text-white/40 text-sm">Contact {detailer.company} for service options and pricing.</p>
+            <p className="text-white/40 text-sm">Contact {detailer.company} for service options.</p>
           )}
         </section>
 
