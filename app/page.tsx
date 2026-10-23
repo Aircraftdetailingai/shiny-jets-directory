@@ -10,6 +10,34 @@ const Globe = dynamic(() => import('@/components/Globe'), { ssr: false });
 const CRM_URL = process.env.NEXT_PUBLIC_CRM_URL || 'https://crm.shinyjets.com';
 const DIRECTORY_API = '/api/detailers';
 
+const US_STATES: Record<string, string> = {
+  ALABAMA: 'AL', ALASKA: 'AK', ARIZONA: 'AZ', ARKANSAS: 'AR', CALIFORNIA: 'CA', COLORADO: 'CO', CONNECTICUT: 'CT',
+  DELAWARE: 'DE', FLORIDA: 'FL', GEORGIA: 'GA', HAWAII: 'HI', IDAHO: 'ID', ILLINOIS: 'IL', INDIANA: 'IN', IOWA: 'IA',
+  KANSAS: 'KS', KENTUCKY: 'KY', LOUISIANA: 'LA', MAINE: 'ME', MARYLAND: 'MD', MASSACHUSETTS: 'MA', MICHIGAN: 'MI',
+  MINNESOTA: 'MN', MISSISSIPPI: 'MS', MISSOURI: 'MO', MONTANA: 'MT', NEBRASKA: 'NE', NEVADA: 'NV', 'NEW HAMPSHIRE': 'NH',
+  'NEW JERSEY': 'NJ', 'NEW MEXICO': 'NM', 'NEW YORK': 'NY', 'NORTH CAROLINA': 'NC', 'NORTH DAKOTA': 'ND', OHIO: 'OH',
+  OKLAHOMA: 'OK', OREGON: 'OR', PENNSYLVANIA: 'PA', 'RHODE ISLAND': 'RI', 'SOUTH CAROLINA': 'SC', 'SOUTH DAKOTA': 'SD',
+  TENNESSEE: 'TN', TEXAS: 'TX', UTAH: 'UT', VERMONT: 'VT', VIRGINIA: 'VA', WASHINGTON: 'WA', 'WEST VIRGINIA': 'WV',
+  WISCONSIN: 'WI', WYOMING: 'WY', 'DISTRICT OF COLUMBIA': 'DC', 'PUERTO RICO': 'PR',
+};
+
+// Match a free-text query against a detailer's city / state (region).
+// Accepts "Chino", "Las Vegas", "FL", "Florida", "Chino, CA".
+function placeMatches(d: Detailer, raw: string): boolean {
+  const q = raw.trim().toUpperCase().replace(/\s+/g, ' ');
+  if (!q) return false;
+  const city = (d.city || '').toUpperCase();
+  const region = (d.region || '').toUpperCase();
+  const [cPart, sPart] = q.split(',').map((x) => x.trim());
+  if (sPart !== undefined) {
+    const st = US_STATES[sPart] || sPart;
+    return !!city && city.includes(cPart) && region === st;
+  }
+  const st = US_STATES[q] || (q.length === 2 ? q : null);
+  if (st && region === st) return true;
+  return q.length >= 3 && !!city && city.includes(q);
+}
+
 type SearchInfo = { matches: Detailer[]; message: string | null } | null;
 
 // Match a searched code against a detailer's home_airport, tolerating the
@@ -101,6 +129,20 @@ export default function DirectoryPage() {
         return;
       }
 
+      // Not an airport hit — try city / state names.
+      const placeHits = detailers.filter((d) => placeMatches(d, search));
+      if (placeHits.length > 0) {
+        const withCoords = placeHits.find((m) => detailerCoords(m));
+        const c = withCoords ? detailerCoords(withCoords) : null;
+        if (c) setFocus({ lat: c[0], lng: c[1], code: (withCoords!.home_airport || '').toUpperCase() });
+        setSearchInfo({ matches: placeHits, message: null });
+        return;
+      }
+      if (!/^[A-Z0-9-]{2,7}$/.test(code)) {
+        setSearchInfo({ matches: [], message: `No detailers found for "${search.trim()}".` });
+        return;
+      }
+
       // No detailer at this airport — resolve its coords to fly there and name
       // the nearest detailer.
       try {
@@ -174,7 +216,7 @@ export default function DirectoryPage() {
               type="text"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search by airport code (KTEB, KLAS...)"
+              placeholder="Airport code, city or state (KTEB, Chino, Florida)"
               className="flex-1 px-4 py-2.5 rounded-lg bg-white/[0.06] border border-white/10 text-white text-sm placeholder-white/30 outline-none focus:border-blue-500/50 transition-colors"
             />
             <button type="submit" className="px-5 py-2.5 rounded-lg bg-blue-500 text-white text-sm font-medium hover:bg-blue-600 transition-colors">Search</button>
@@ -278,6 +320,9 @@ export default function DirectoryPage() {
       <footer className="relative z-10 text-center py-3 border-t border-white/5 flex-shrink-0">
         <p className="text-white/20 text-xs">
           <a href="https://shinyjets.com" className="hover:text-white/40 transition-colors">Shiny Jets</a>
+          {' · '}<a href="/contact" className="hover:text-white/40 transition-colors">Contact</a>
+          {' · '}<a href="/privacy" className="hover:text-white/40 transition-colors">Privacy</a>
+          {' · '}<a href="/terms" className="hover:text-white/40 transition-colors">Terms</a>
           {' '}&middot; The Professional Aircraft Detailing Platform
         </p>
       </footer>

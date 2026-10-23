@@ -134,7 +134,7 @@ export default async function DetailerProfilePage({ params }: { params: Promise<
       <header className="border-b border-white/10 bg-[#0a0e1a]/90 backdrop-blur-sm sticky top-0 z-20">
         <div className="max-w-5xl mx-auto px-6 py-4 flex items-center justify-between">
           <a href="https://shinyjets.com" className="flex items-center gap-2.5">
-            <img src="https://shinyjets.com/logo.png" alt="Shiny Jets" className="h-8 object-contain" />
+            <img src="/logos/shiny-jets-dark.png" alt="Shiny Jets" className="h-8 object-contain" />
             <span className="text-white font-semibold tracking-tight">Shiny Jets</span>
           </a>
           <a href="/" className="text-xs text-white/60 hover:text-white">&larr; Back to directory</a>
