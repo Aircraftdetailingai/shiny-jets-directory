@@ -1,5 +1,5 @@
 import type { Metadata } from 'next';
-import { notFound } from 'next/navigation';
+import { notFound, permanentRedirect } from 'next/navigation';
 import { getAirportInfo } from '@/lib/airport-cities';
 
 const CRM_URL = process.env.NEXT_PUBLIC_CRM_URL || 'https://crm.shinyjets.com';
@@ -26,12 +26,13 @@ interface Detailer {
   review_count?: number;
   avg_rating?: number | null;
   slug: string;
+  redirect_to?: string | null;
 }
 
 async function fetchDetailer(slug: string): Promise<Detailer | null> {
   try {
     const res = await fetch(`${CRM_URL}/api/detailers/profile/${slug}`, {
-      next: { revalidate: 300 },
+      cache: 'no-store', // hidden listings must disappear immediately
     });
     if (!res.ok) return null;
     const data = await res.json();
@@ -81,6 +82,11 @@ export default async function DetailerProfilePage({ params }: { params: Promise<
 
   if (!detailer) {
     notFound();
+  }
+
+  // Renamed slug (e.g. /detailer/rick -> /detailer/premier-aviation-ventures)
+  if (detailer.redirect_to && detailer.redirect_to !== slug) {
+    permanentRedirect(`/detailer/${detailer.redirect_to}`);
   }
 
   const airport = getAirportInfo(detailer.home_airport);

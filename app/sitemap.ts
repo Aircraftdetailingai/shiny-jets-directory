@@ -3,7 +3,7 @@ import type { MetadataRoute } from 'next';
 const CRM_URL = process.env.NEXT_PUBLIC_CRM_URL || 'https://crm.shinyjets.com';
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://directory.shinyjets.com';
 
-export const revalidate = 3600; // Regenerate every hour
+export const revalidate = 300; // Regenerate every 5 minutes
 
 interface SitemapDetailer {
   slug: string;
@@ -13,7 +13,7 @@ interface SitemapDetailer {
 async function fetchDetailers(): Promise<SitemapDetailer[]> {
   try {
     const res = await fetch(`${CRM_URL}/api/detailers/sitemap`, {
-      next: { revalidate: 3600 },
+      next: { revalidate: 300 },
     });
     if (!res.ok) return [];
     const data = await res.json();

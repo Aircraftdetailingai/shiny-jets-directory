@@ -125,6 +125,8 @@ export async function GET() {
     .eq('listed_in_directory', true)
     .eq('status', 'active')
     .not('slug', 'is', null)
+    .not('company', 'is', null)
+    .neq('company', '')
     .range(0, 999);
 
   if (error) {
@@ -132,7 +134,9 @@ export async function GET() {
     return NextResponse.json({ error: 'Failed to fetch detailers' }, { status: 500 });
   }
 
-  const ids = (detailers || []).map((d) => d.id);
+  // Require a real (non-blank) business name before a profile is shown.
+  const named = (detailers || []).filter((d) => typeof d.company === 'string' && d.company.trim().length > 0);
+  const ids = named.map((d) => d.id);
 
   // LEFT-merge: detailers with zero matching locations still appear in the
   // response with locations: [].
@@ -200,10 +204,10 @@ export async function GET() {
   // longer depends on the hardcoded client-side airport table.
   const homeCoordsByCode = await resolveAirportCoords(
     supabase,
-    (detailers || []).map((d) => d.home_airport).filter(Boolean) as string[],
+    named.map((d) => d.home_airport).filter(Boolean) as string[],
   );
 
-  const enriched = (detailers || []).map((d) => {
+  const enriched = named.map((d) => {
     const s = statsMap[d.id];
     const homeCoords = d.home_airport ? homeCoordsByCode[d.home_airport.toUpperCase()] : undefined;
     const vAvg = s && s.vTotal > 0 ? parseFloat((s.vSum / s.vTotal).toFixed(1)) : null;
