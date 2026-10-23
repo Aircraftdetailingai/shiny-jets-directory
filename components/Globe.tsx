@@ -90,7 +90,7 @@ async function loadCountries(): Promise<any[]> {
   if (cachedFeatures) return cachedFeatures;
   try {
     // Self-hosted (was cdn.jsdelivr.net, which the network policy can block).
-    const res = await fetch('/countries-50m.json');
+    const res = await fetch('/countries-110m.json');
     if (!res.ok) return [];
     const topology = await res.json();
     const fc: any = feature(topology, topology.objects.countries);
