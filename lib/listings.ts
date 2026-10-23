@@ -31,7 +31,9 @@ export interface ResolvedAirport {
   name: string | null;
   city: string | null;
   stateCode: string | null; // US state 2-letter code, only for US airports
-  country: string | null;
+  country: string | null; // ISO 3166-1 alpha-2 from the airports row (iso_region prefix / country)
+  countryName: string | null; // English display name for `country`, e.g. "Canada"
+  isUS: boolean; // true only for airports in the 50 states + DC (iso_region US-xx)
 }
 
 export interface Listing {
@@ -44,6 +46,13 @@ export interface Listing {
 export interface AirportPage {
   slug: string; // lowercase code
   airport: ResolvedAirport;
+  listings: Listing[];
+}
+
+export interface CountryPage {
+  slug: string; // e.g. "canada"
+  countryCode: string;
+  countryName: string;
   listings: Listing[];
 }
 
@@ -61,7 +70,35 @@ type AirportRow = {
   city: string | null; iso_region: string | null; country: string | null;
 };
 
-type DetailerRow = { slug: string | null; company: string | null; home_airport: string | null };
+type DetailerRow = { slug: string | null; company: string | null; home_airport: string | null; country?: string | null };
+
+const REGION_NAMES = new Intl.DisplayNames(['en'], { type: 'region' });
+
+/** English name for an ISO country code, straight from the runtime's CLDR data. */
+export function countryName(cc: string | null | undefined): string | null {
+  const c = realText(cc)?.toUpperCase();
+  if (!c || !/^[A-Z]{2}$/.test(c)) return null;
+  try {
+    const n = REGION_NAMES.of(c);
+    return n && n !== c ? n : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * ICAO location-indicator prefixes used by US airports (contiguous US = K,
+ * Alaska = PA/PF/PO/PP, Hawaii = PH). Used only as a sanity check against the
+ * airports row's iso_region; the row itself decides the country.
+ */
+export function icaoLooksUS(code: string): boolean {
+  if (!/^[A-Z]{4}$/.test(code)) return true; // FAA/local idents (e.g. 0B5) carry no prefix
+  return code.startsWith('K') || /^P[AFHOP]/.test(code);
+}
+
+export function countrySlug(name: string): string {
+  return stateSlug(name.replace(/\./g, ''));
+}
 
 export function stateSlug(name: string): string {
   return name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
@@ -91,14 +128,16 @@ export function resolveAirports(codes: string[], rows: AirportRow[]): Record<str
   for (const [code, { row }] of Object.entries(best)) {
     const iso = row.iso_region || '';
     const [cc, sub] = iso.split('-');
-    const country = realText(row.country) || cc || null;
-    const stateCode = cc === 'US' && sub && US_STATE_NAMES[sub] ? sub : null;
+    const country = (realText(row.country) || realText(cc) || '').toUpperCase() || null;
+    const isUS = country === 'US' && cc === 'US' && !!sub && !!US_STATE_NAMES[sub];
     out[code] = {
       code: (realText(row.icao) || realText(row.gps_code) || code).toUpperCase(),
       name: realText(row.name),
       city: realText(row.city),
-      stateCode,
+      stateCode: isUS ? sub : null,
       country,
+      countryName: countryName(country),
+      isUS,
     };
   }
   return out;
@@ -123,7 +162,8 @@ export function buildListings(detailers: DetailerRow[], airportRows: AirportRow[
 export function buildAirportPages(listings: Listing[]): AirportPage[] {
   const map = new Map<string, AirportPage>();
   for (const l of listings) {
-    if (!l.airport || !l.airport.name) continue;
+    // US-only: non-US airports are grouped on /country/<name> pages instead.
+    if (!l.airport || !l.airport.name || !l.airport.isUS) continue;
     const slug = l.airport.code.toLowerCase();
     if (!/^[a-z0-9-]{2,7}$/.test(slug)) continue;
     if (!map.has(slug)) map.set(slug, { slug, airport: l.airport, listings: [] });
@@ -135,7 +175,7 @@ export function buildAirportPages(listings: Listing[]): AirportPage[] {
 export function buildStatePages(listings: Listing[], airports: AirportPage[]): StatePage[] {
   const map = new Map<string, StatePage>();
   for (const l of listings) {
-    const sc = l.airport?.stateCode;
+    const sc = l.airport?.isUS ? l.airport.stateCode : null;
     if (!sc) continue;
     const stateName = US_STATE_NAMES[sc];
     const slug = stateSlug(stateName);
@@ -143,10 +183,79 @@ export function buildStatePages(listings: Listing[], airports: AirportPage[]): S
     map.get(slug)!.listings.push(l);
   }
   for (const a of airports) {
-    const sc = a.airport.stateCode;
+    const sc = a.airport.isUS ? a.airport.stateCode : null;
     if (sc) map.get(stateSlug(US_STATE_NAMES[sc]))?.airports.push(a);
   }
   return Array.from(map.values()).sort((a, b) => a.slug.localeCompare(b.slug));
+}
+
+/** One page per non-US country that has at least one real listing. */
+export function buildCountryPages(listings: Listing[]): CountryPage[] {
+  const map = new Map<string, CountryPage>();
+  for (const l of listings) {
+    const a = l.airport;
+    if (!a || a.isUS || !a.country || !a.countryName) continue;
+    const slug = countrySlug(a.countryName);
+    if (!slug) continue;
+    if (!map.has(slug)) map.set(slug, { slug, countryCode: a.country, countryName: a.countryName, listings: [] });
+    map.get(slug)!.listings.push(l);
+  }
+  return Array.from(map.values()).filter((c) => c.listings.length > 0).sort((a, b) => a.slug.localeCompare(b.slug));
+}
+
+export interface AmbiguousListing {
+  slug: string;
+  company: string;
+  code: string;
+  resolvedTo: string | null;
+  reasons: string[];
+}
+
+/**
+ * Report-only: listings whose stored home_airport code looks ambiguous. Never
+ * changes data or what the site shows; used by `npm run check:listings`.
+ */
+export function ambiguousListings(detailers: DetailerRow[], airportRows: AirportRow[]): AmbiguousListing[] {
+  const listings = buildListings(detailers, airportRows);
+  const bySlug = new Map(detailers.map((d) => [realText(d.slug), d]));
+  const out: AmbiguousListing[] = [];
+  for (const l of listings) {
+    const code = l.homeAirportRaw;
+    if (!code) continue;
+    const reasons: string[] = [];
+    const matches = airportRows.filter((r) =>
+      [r.icao, r.gps_code, r.iata, r.local_code].some((c) => (c || '').toUpperCase() === code));
+    const countries = Array.from(new Set(matches.map((r) => (r.iso_region || '').split('-')[0]).filter(Boolean)));
+    if (!l.airport) reasons.push('code does not match any airport');
+    if (countries.length > 1) reasons.push(`code matches airports in ${countries.length} countries (${countries.join(', ')})`);
+    const isIcao = !!matches.find((r) => (r.icao || '').toUpperCase() === code || (r.gps_code || '').toUpperCase() === code);
+    if (l.airport && !isIcao) reasons.push(`stored as a ${code.length}-character non-ICAO code; resolved to ${l.airport.code}`);
+    const listedCountry = realText(bySlug.get(l.slug)?.country)?.toUpperCase();
+    if (l.airport?.country && listedCountry && listedCountry !== l.airport.country) {
+      reasons.push(`profile country ${listedCountry} differs from airport country ${l.airport.country}`);
+    }
+    if (l.airport && l.airport.isUS !== icaoLooksUS(l.airport.code)) reasons.push('ICAO prefix disagrees with airport country');
+    // Only report codes that are actually unclear: a non-ICAO code alone is fine
+    // unless it is paired with a cross-country or profile-country conflict.
+    const serious = reasons.filter((r) => !r.startsWith('stored as'));
+    if (serious.length > 0) out.push({ slug: l.slug, company: l.company, code, resolvedTo: l.airport?.code || null, reasons });
+  }
+  return out;
+}
+
+/** "City, ST" for US airports, "City, Country" elsewhere (only real values). */
+export function airportPlaceLabel(a: ResolvedAirport | null | undefined): string | null {
+  if (!a) return null;
+  const parts = a.isUS ? [a.city, a.stateCode] : [a.city, a.countryName || a.country];
+  const label = parts.filter(Boolean).join(', ');
+  return label || null;
+}
+
+/** Path of the landing page a listing's home airport belongs to, if any. */
+export function countryPath(a: ResolvedAirport | null | undefined): string | null {
+  if (!a || a.isUS || !a.countryName) return null;
+  const slug = countrySlug(a.countryName);
+  return slug ? `/country/${slug}` : null;
 }
 
 async function loadRows(): Promise<{ detailers: DetailerRow[]; airports: AirportRow[] }> {
@@ -163,7 +272,7 @@ async function loadRows(): Promise<{ detailers: DetailerRow[]; airports: Airport
   }
   const { data, error } = await supabase
     .from('detailers')
-    .select('slug, company, home_airport')
+    .select('slug, company, home_airport, country')
     .eq('listed_in_directory', true)
     .eq('status', 'active')
     .not('slug', 'is', null)
@@ -190,6 +299,11 @@ export interface DirectoryData {
   listings: Listing[];
   airportPages: AirportPage[];
   statePages: StatePage[];
+  countryPages: CountryPage[];
+}
+
+export async function loadDirectoryRows() {
+  return loadRows();
 }
 
 export async function getDirectoryData(): Promise<DirectoryData> {
@@ -197,7 +311,8 @@ export async function getDirectoryData(): Promise<DirectoryData> {
   const listings = buildListings(detailers, airports);
   const airportPages = buildAirportPages(listings);
   const statePages = buildStatePages(listings, airportPages);
-  return { listings, airportPages, statePages };
+  const countryPages = buildCountryPages(listings);
+  return { listings, airportPages, statePages, countryPages };
 }
 
 /** Look up one airport code (as stored on a detailer) for profile pages. */

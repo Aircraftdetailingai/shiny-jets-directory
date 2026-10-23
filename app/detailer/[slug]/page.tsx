@@ -1,6 +1,6 @@
 import type { Metadata } from 'next';
 import { notFound, permanentRedirect } from 'next/navigation';
-import { lookupAirport, realText, ORG_JSONLD } from '@/lib/listings';
+import { lookupAirport, realText, ORG_JSONLD, airportPlaceLabel, countryPath } from '@/lib/listings';
 
 const CRM_URL = process.env.NEXT_PUBLIC_CRM_URL || 'https://crm.shinyjets.com';
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://directory.shinyjets.com';
@@ -52,7 +52,7 @@ export async function generateMetadata({ params }: { params: Promise<{ slug: str
   const company = realText(detailer.company);
   const airport = await lookupAirport(detailer.home_airport);
   const airportLabel = airport?.name ? `${airport.name} (${airport.code})` : null;
-  const locationLabel = airport?.city ? [airport.city, airport.stateCode].filter(Boolean).join(', ') : null;
+  const locationLabel = airportPlaceLabel(airport);
 
   // Blank business name: never print "null"/"undefined"; keep it out of the index.
   if (!company) {
@@ -108,7 +108,8 @@ export default async function DetailerProfilePage({ params }: { params: Promise<
 
   const profileUrl = `${SITE_URL}/detailer/${slug}`;
   const requestUrl = `${CRM_URL}/request/${slug}`;
-  const placeLabel = airport?.city ? [airport.city, airport.stateCode].filter(Boolean).join(', ') : null;
+  const placeLabel = airportPlaceLabel(airport);
+  const countryHref = countryPath(airport);
 
   // Only real values; no hard-coded price range, no empty offers.
   const jsonLd = company ? {
@@ -123,7 +124,7 @@ export default async function DetailerProfilePage({ params }: { params: Promise<
     address: airport?.city ? {
       '@type': 'PostalAddress',
       addressLocality: airport.city,
-      addressRegion: airport.stateCode || undefined,
+      addressRegion: airport.isUS ? airport.stateCode || undefined : undefined,
       addressCountry: airport.country || realText(detailer.country) || undefined,
     } : undefined,
     areaServed: airport?.name ? {
@@ -195,7 +196,11 @@ export default async function DetailerProfilePage({ params }: { params: Promise<
               <p className="text-white/60 mb-3">
                 <span className="text-white/80 font-medium">{airport.name}</span>
                 <span className="text-white/40"> ({airport.code})</span>
-                {placeLabel && <span className="text-white/40"> &middot; {placeLabel}</span>}
+                {placeLabel && (
+                  <span className="text-white/40"> &middot; {countryHref
+                    ? <a href={countryHref} className="hover:text-white/70 underline-offset-2 hover:underline">{placeLabel}</a>
+                    : placeLabel}</span>
+                )}
               </p>
             )}
 
