@@ -134,8 +134,12 @@ export async function GET() {
     return NextResponse.json({ error: 'Failed to fetch detailers' }, { status: 500 });
   }
 
-  // Require a real (non-blank) business name before a profile is shown.
-  const named = (detailers || []).filter((d) => typeof d.company === 'string' && d.company.trim().length > 0);
+  // Never surface a listing without a real business name (it would render as
+  // blank / "null" on the globe and in lists).
+  const named = (detailers || []).filter((d) => {
+    const c = typeof d.company === 'string' ? d.company.trim() : '';
+    return c !== '' && !/^(null|undefined)$/i.test(c);
+  });
   const ids = named.map((d) => d.id);
 
   // LEFT-merge: detailers with zero matching locations still appear in the
