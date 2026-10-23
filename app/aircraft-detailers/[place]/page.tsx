@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
-import { notFound } from 'next/navigation';
+import { notFound, permanentRedirect } from 'next/navigation';
 import ListingLinks from '@/components/ListingLinks';
-import { getDirectoryData, SITE_URL, ORG_JSONLD, US_STATE_NAMES, stateSlug, type AirportPage, type StatePage } from '@/lib/listings';
+import { getDirectoryData, SITE_URL, ORG_JSONLD, US_STATE_NAMES, stateSlug, countryPath, type AirportPage, type StatePage } from '@/lib/listings';
 
 export const revalidate = 300;
 export const dynamicParams = true;
@@ -10,7 +10,7 @@ async function resolvePlace(place: string): Promise<
   { kind: 'state'; page: StatePage } | { kind: 'airport'; page: AirportPage; state: StatePage | null } | null
 > {
   const slug = place.toLowerCase();
-  const { statePages, airportPages } = await getDirectoryData();
+  const { statePages, airportPages, listings } = await getDirectoryData();
   const st = statePages.find((s) => s.slug === slug);
   if (st && st.listings.length > 0) return { kind: 'state', page: st };
   const ap = airportPages.find((a) => a.slug === slug);
@@ -19,6 +19,11 @@ async function resolvePlace(place: string): Promise<
     const state = sc ? statePages.find((s) => s.slug === stateSlug(US_STATE_NAMES[sc])) || null : null;
     return { kind: 'airport', page: ap, state };
   }
+  // Non-US airports no longer get /aircraft-detailers/<code> pages; send any old
+  // links to the country page that now lists them.
+  const intl = listings.find((l) => l.airport && !l.airport.isUS && l.airport.code.toLowerCase() === slug);
+  const to = countryPath(intl?.airport);
+  if (to) permanentRedirect(to);
   return null;
 }
 
