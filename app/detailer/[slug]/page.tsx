@@ -1,6 +1,6 @@
 import type { Metadata } from 'next';
 import { notFound, permanentRedirect } from 'next/navigation';
-import { getAirportInfo } from '@/lib/airport-cities';
+import { lookupAirport, realText, ORG_JSONLD } from '@/lib/listings';
 
 const CRM_URL = process.env.NEXT_PUBLIC_CRM_URL || 'https://crm.shinyjets.com';
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://directory.shinyjets.com';
@@ -49,15 +49,24 @@ export async function generateMetadata({ params }: { params: Promise<{ slug: str
     return { title: 'Detailer Not Found | Shiny Jets Directory' };
   }
 
-  const airport = getAirportInfo(detailer.home_airport);
-  const airportLabel = airport ? `${airport.name} (${detailer.home_airport})` : detailer.home_airport || '';
-  const locationLabel = airport ? `${airport.city}, ${airport.state}` : '';
+  const company = realText(detailer.company);
+  const airport = await lookupAirport(detailer.home_airport);
+  const airportLabel = airport?.name ? `${airport.name} (${airport.code})` : null;
+  const locationLabel = airport?.city ? [airport.city, airport.stateCode].filter(Boolean).join(', ') : null;
 
-  const title = `${detailer.company} — Aircraft Detailing${airport ? ` at ${airport.name}` : ''} | Shiny Jets Directory`;
-  const description = `${detailer.company} provides professional aircraft detailing services${airport ? ` at ${airportLabel}, ${locationLabel}` : ''}. ${detailer.online_booking ? 'Book online or request' : 'Request'} a quote.`;
+  // Blank business name: never print "null"/"undefined"; keep it out of the index.
+  if (!company) {
+    return {
+      title: { absolute: 'Aircraft Detailer | Shiny Jets Directory' },
+      robots: { index: false, follow: true },
+    };
+  }
+
+  const title = `${company} — Aircraft Detailing${airport?.name ? ` at ${airport.name}` : ''} | Shiny Jets Directory`;
+  const description = `${company} is listed in the Shiny Jets aircraft detailer directory${airportLabel ? ` with a home airport of ${airportLabel}${locationLabel ? `, ${locationLabel}` : ''}` : ''}. ${detailer.online_booking ? 'Book online or request' : 'Request'} a quote.`;
 
   return {
-    title,
+    title: { absolute: title },
     description,
     alternates: { canonical: `${SITE_URL}/detailer/${slug}` },
     openGraph: {
@@ -89,7 +98,9 @@ export default async function DetailerProfilePage({ params }: { params: Promise<
     permanentRedirect(`/detailer/${detailer.redirect_to}`);
   }
 
-  const airport = getAirportInfo(detailer.home_airport);
+  const company = realText(detailer.company);
+  const displayName = company || 'Aircraft Detailer';
+  const airport = await lookupAirport(detailer.home_airport);
   const planLabel = detailer.plan === 'enterprise' ? 'Enterprise Partner'
     : detailer.plan === 'business' ? 'Business'
     : detailer.plan === 'pro' ? 'Pro Member'
@@ -97,44 +108,49 @@ export default async function DetailerProfilePage({ params }: { params: Promise<
 
   const profileUrl = `${SITE_URL}/detailer/${slug}`;
   const requestUrl = `${CRM_URL}/request/${slug}`;
+  const placeLabel = airport?.city ? [airport.city, airport.stateCode].filter(Boolean).join(', ') : null;
 
-  const jsonLd = {
+  // Only real values; no hard-coded price range, no empty offers.
+  const jsonLd = company ? {
     '@context': 'https://schema.org',
     '@type': 'LocalBusiness',
     '@id': profileUrl,
-    name: detailer.company,
-    description: detailer.description || `${detailer.company} — professional aircraft detailing services${airport ? ` at ${airport.name}, ${airport.city}, ${airport.state}` : ''}.`,
+    name: company,
+    description: realText(detailer.description) || `${company} is an aircraft detailer listed in the Shiny Jets directory${airport?.name ? `, based at ${airport.name}` : ''}.`,
     url: profileUrl,
-    image: detailer.logo_url || undefined,
-    telephone: detailer.phone || undefined,
-    address: airport ? {
+    image: realText(detailer.logo_url) || undefined,
+    telephone: realText(detailer.phone) || undefined,
+    address: airport?.city ? {
       '@type': 'PostalAddress',
       addressLocality: airport.city,
-      addressRegion: airport.state,
-      addressCountry: detailer.country || 'US',
+      addressRegion: airport.stateCode || undefined,
+      addressCountry: airport.country || realText(detailer.country) || undefined,
     } : undefined,
-    areaServed: airport ? `${airport.city}, ${airport.state}` : undefined,
+    areaServed: airport?.name ? {
+      '@type': 'Airport',
+      name: airport.name,
+      identifier: airport.code,
+      ...(airport.code.length === 4 ? { icaoCode: airport.code } : {}),
+    } : undefined,
     serviceType: 'Aircraft Detailing',
-    priceRange: '$$$',
+    parentOrganization: ORG_JSONLD,
     aggregateRating: detailer.avg_rating && detailer.review_count ? {
       '@type': 'AggregateRating',
       ratingValue: detailer.avg_rating,
       reviewCount: detailer.review_count,
     } : undefined,
-    makesOffer: (detailer.services || []).slice(0, 8).map(s => ({
-      '@type': 'Offer',
-      itemOffered: { '@type': 'Service', name: s.name },
-    })),
-  };
+  } : null;
 
   const themeColor = detailer.theme_primary || '#0081b8';
 
   return (
     <div className="min-h-screen bg-[#0a0e1a] text-white">
-      <script
-        type="application/ld+json"
-        dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
-      />
+      {jsonLd && (
+        <script
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
+        />
+      )}
 
       {/* Header */}
       <header className="border-b border-white/10 bg-[#0a0e1a]/90 backdrop-blur-sm sticky top-0 z-20">
@@ -154,7 +170,7 @@ export default async function DetailerProfilePage({ params }: { params: Promise<
             {detailer.logo_url ? (
               <img
                 src={detailer.logo_url}
-                alt={`${detailer.company} logo`}
+                alt={`${displayName} logo`}
                 className="w-24 h-24 md:w-32 md:h-32 rounded-2xl object-contain border border-white/10 bg-[#0d1520]"
               />
             ) : (
@@ -162,24 +178,24 @@ export default async function DetailerProfilePage({ params }: { params: Promise<
                 className="w-24 h-24 md:w-32 md:h-32 rounded-2xl flex items-center justify-center text-4xl font-bold text-white"
                 style={{ background: `${themeColor}33`, color: themeColor }}
               >
-                {detailer.company?.charAt(0) || '?'}
+                {displayName.charAt(0)}
               </div>
             )}
           </div>
 
           <div className="flex-1">
             <div className="flex items-center gap-3 mb-2">
-              <h1 className="text-3xl md:text-4xl font-light tracking-tight">{detailer.company}</h1>
+              <h1 className="text-3xl md:text-4xl font-light tracking-tight">{displayName}</h1>
               <span className="px-2 py-0.5 text-[10px] uppercase tracking-wider rounded-full border border-white/20 text-white/70">
                 {planLabel}
               </span>
             </div>
 
-            {airport && (
+            {airport?.name && (
               <p className="text-white/60 mb-3">
                 <span className="text-white/80 font-medium">{airport.name}</span>
-                <span className="text-white/40"> ({detailer.home_airport})</span>
-                <span className="text-white/40"> &middot; {airport.city}, {airport.state}</span>
+                <span className="text-white/40"> ({airport.code})</span>
+                {placeLabel && <span className="text-white/40"> &middot; {placeLabel}</span>}
               </p>
             )}
 
@@ -204,7 +220,7 @@ export default async function DetailerProfilePage({ params }: { params: Promise<
               )}
               {detailer.verified_finish && (
                 <span className="px-3 py-1 text-xs font-medium rounded-full bg-yellow-500/10 border border-yellow-500/30 text-yellow-400">
-                  Verified Finish Certified
+                  Verified Finish
                 </span>
               )}
             </div>
@@ -242,14 +258,14 @@ export default async function DetailerProfilePage({ params }: { params: Promise<
               ))}
             </div>
           ) : (
-            <p className="text-white/40 text-sm">Contact {detailer.company} for service options and pricing.</p>
+            <p className="text-white/40 text-sm">Contact {displayName} for service options.</p>
           )}
         </section>
 
-        {/* Certifications */}
+        {/* Credentials (detailer-entered) */}
         {detailer.certifications && detailer.certifications.length > 0 && (
           <section className="mb-10">
-            <h2 className="text-xs uppercase tracking-widest text-white/40 mb-3">Certifications</h2>
+            <h2 className="text-xs uppercase tracking-widest text-white/40 mb-3">Credentials</h2>
             <div className="flex flex-wrap gap-2">
               {detailer.certifications.map((c, i) => (
                 <span key={i} className="px-3 py-1.5 text-xs font-medium rounded-full bg-blue-500/10 border border-blue-500/20 text-blue-400">
@@ -262,7 +278,7 @@ export default async function DetailerProfilePage({ params }: { params: Promise<
 
         {/* CTA Section */}
         <section className="mt-12 p-8 rounded-2xl border border-white/10 bg-white/[0.02] text-center">
-          <h2 className="text-2xl font-light mb-3">Ready to book {detailer.company}?</h2>
+          <h2 className="text-2xl font-light mb-3">Ready to book {displayName}?</h2>
           <p className="text-white/60 text-sm mb-6">Get a quote in under 2 minutes &middot; No obligation</p>
           <a
             href={requestUrl}

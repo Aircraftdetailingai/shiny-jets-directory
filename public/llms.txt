@@ -1,0 +1,21 @@
+# Shiny Jets Directory
+
+> The Shiny Jets Directory (https://directory.shinyjets.com) is a directory of aircraft detailers. Detailers who use the Shiny Jets CRM list themselves in the directory. Visitors can search by home airport and request a quote from each listing.
+
+## About
+
+- Listings are created and maintained by the detailers themselves through the Shiny Jets CRM.
+- Each listing has a "Request a Quote" link that sends the request directly to that detailer.
+- Shiny Jets CRM is software built by an aircraft detailer, for aircraft detailers.
+- Shiny Jets was founded by Brett Berry, who has 18 years of experience detailing aircraft.
+
+## Key URLs
+
+- Directory home: https://directory.shinyjets.com/
+- Detailer listings: https://directory.shinyjets.com/detailer/{slug}
+- Detailers by state: https://directory.shinyjets.com/aircraft-detailers/{state} (for example /aircraft-detailers/california)
+- Detailers by airport: https://directory.shinyjets.com/aircraft-detailers/{airport-code} (for example /aircraft-detailers/kvny)
+- Sitemap: https://directory.shinyjets.com/sitemap.xml
+- Contact: https://directory.shinyjets.com/contact
+- Shiny Jets CRM (for detailers): https://crm.shinyjets.com
+- Shiny Jets: https://shinyjets.com
